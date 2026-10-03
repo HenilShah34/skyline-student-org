@@ -1,10 +1,10 @@
 # Skyline Student Association ERP
 
-A small, complete ERP for a student association, built for the **Odoo × LDCE Hackathon 2026**. It covers memberships, event ticketing with door check-in, announcements, a merch store, a fundraiser task board, and the treasurer's books, all on one transactional SQLite database with a zero-dependency browser UI. Four roles (Admin, Treasurer, Volunteer, Student) each see exactly what they're allowed to do, and admins manage those roles from inside the app under a Founding Admin hierarchy.
+A small, complete ERP for a student association, built for the **Odoo × LDCE Hackathon 2026**. It covers memberships, event ticketing with door check-in, announcements, a merch store, a fundraiser task board, and the treasurer's books, all on one transactional SQLite database with a zero-dependency browser UI. Four roles (Admin, Treasurer, Volunteer, Student) each see exactly what they're allowed to do, and admins manage those roles from inside the app under a Founding Admin hierarchy. Tickets, member IDs and reimbursement vouchers come as printable digital passes with scannable barcodes, and the open books hide other members' names from students.
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
 - **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
-- **Proof:** 6 automated verification suites (202 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Proof:** 7 automated verification suites (229 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -12,12 +12,12 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 | # | Scene | What happens | Writes to |
 |---|---|---|---|
-| 1 | **Membership** | Join or renew for ₹500/year. Renewal opens 30 days before expiry, so a double click can't charge twice. Door staff look members up by name, email or `SKY-2026-NNN` code. | `users`, `ledger_transactions` |
-| 2 | **Events & door check-in** | Members pay the member price and everyone else the guest price, decided **on the server** from the live membership. Seats are claimed in a locked transaction. Volunteers scan `TKT-…` codes at the door; a second scan is refused. | `events`, `tickets`, `ledger_transactions` |
+| 1 | **Membership** | Join or renew for ₹500/year. Renewal opens 30 days before expiry, so a double click can't charge twice. Door staff look members up by name, email or `SKY-2026-NNN` code. Every member gets a printable **Member ID Pass** with a barcode of their code. | `users`, `ledger_transactions` |
+| 2 | **Events & door check-in** | Members pay the member price and everyone else the guest price, decided **on the server** from the live membership. Seats are claimed in a locked transaction. Volunteers scan `TKT-…` codes at the door; a second scan is refused. Each ticket opens as a printable **Entry Pass** (tier, price paid, check-in status, barcode). | `events`, `tickets`, `ledger_transactions` |
 | 3 | **Announcements** | Category and keyword archive. Members-only posts are filtered out in SQL for non-members, who see how many are hidden. Staff broadcasts report a recipient count. | `announcements` |
-| 4 | **Merch store** | Hoodies and tees with per-size stock (S/M/L/XL), member vs regular pricing, and a pickup desk that records who handed each order over and when. | `merch_variants`, `merch_orders`, `ledger_transactions` |
+| 4 | **Merch store** | Hoodies and tees with per-size stock (S/M/L/XL), member vs regular pricing, and a pickup desk that records who handed each order over and when. The Admin restocks any size, including sold-out ones, from the product card. | `merch_variants`, `merch_orders`, `ledger_transactions` |
 | 5 | **Bake-sale planner** | A To do / In progress / Done board with campaign progress and an "on track" flag (no overdue unfinished tasks). Cards move in every direction (start, back to To do, done, reopen). Staff assign people from a dropdown on each card, and an unassigned task can't be started or finished. Students may move only tasks assigned to them; only the Admin can delete a task. | `fundraiser_tasks` |
-| 6 | **Treasurer's books** | A **Semester Money At-a-Glance** panel answers the treasurer's questions for everyone in the club: *What Came In − What Went Out = How Much Is Left*, then dues collected, tickets sold, merchandise and fundraisers, and volunteer expenses reimbursed (with claims still waiting). Each card filters the ledger to the rows behind it. Staff submit receipts; only the Treasurer or Admin can approve, never on their own claim, and approval writes exactly one money-out row. The Treasurer and Admin also export the books as CSV and record fundraiser income. | `expense_reimbursements`, `ledger_transactions` |
+| 6 | **Treasurer's books** | A **Semester Money At-a-Glance** panel answers the treasurer's questions for everyone in the club: *What Came In − What Went Out = How Much Is Left*, then dues collected, tickets sold, merchandise and fundraisers, and volunteer expenses reimbursed (with claims still waiting). Each card filters the ledger to the rows behind it. Staff submit receipts; only the Treasurer or Admin can approve, never on their own claim, and approval writes exactly one money-out row. The Treasurer and Admin also export the books as CSV and record fundraiser income. Every approved claim has a printable **Treasurer Payment Voucher**. Students see every amount, but other members' names and codes are masked on the server. | `expense_reimbursements`, `ledger_transactions` |
 
 **The thread that ties them together is the ledger.** Every rupee that moves (dues, ticket sales, merch sales, fundraiser income, reimbursements) is appended to `ledger_transactions` *in the same transaction* as the change that caused it. The treasurer's totals therefore always reconcile: `total_in − total_out = net_balance`, and the five categories add up to the whole.
 
@@ -44,6 +44,8 @@ Browser (public/app.js)            Express 5 (server.js)                        
 | Account recovery | Forgot email: look an account up by membership code or full name; the email comes back for that account only. Forgot password: email **plus** membership code or full name, a new password of 6+ characters, and an immediate sign-in. A wrong pair and an unknown email get the same `401`. | `server.js` `/api/auth/*` |
 | Pricing | Always recalculated on the server from the live membership row. Prices in request bodies are ignored. | `routes/events.js`, `routes/merch.js` |
 | Input handling | Strict parsers for ids, enums and integers (`400` before any DB work); parameterised SQL everywhere; `LIKE` wildcards escaped; 100 kb JSON limit (`413`). | `lib/http.js` |
+| Ledger privacy | Students get the full totals, but on other people's rows the server swaps the name for "Club Member" ("Volunteer" on reimbursements), masks ticket, order and membership codes to their prefix (`TKT-GALA26-•••`), and strips the name from the description. Those codes are credentials: they admit someone at the door, collect an order at the desk, or help reset a password. Staff see everything. | `routes/finance.js` `maskTransaction()` |
+| Barcodes | A Code 128 (set B) generator in plain JavaScript draws each code as an SVG barcode with a mod-103 check symbol and quiet zones. It needs no library and no network. | `public/app.js` `code128Widths()`, `barcodeSvg()` |
 | Static files | Only `public/` is web-reachable. Server code, the database and dotfiles return 404. | `server.js` |
 
 ---
@@ -235,13 +237,13 @@ All five passwords are `skyline123`. On the sign-in page, open **🔑 Quick Fill
 | Action | Student | Volunteer | Treasurer | Admin |
 |---|:-:|:-:|:-:|:-:|
 | Join/renew, buy tickets and merch, read announcements | ✓ | ✓ | ✓ | ✓ |
-| See the semester books: at-a-glance panel and ledger | ✓ | ✓ | ✓ | ✓ |
+| See the semester books: at-a-glance panel and ledger (students: others' names masked) | ✓ | ✓ | ✓ | ✓ |
 | Move a bake-sale task | own tasks only | ✓ | ✓ | ✓ |
 | Door lookup and check-in, pickup desk, post announcements, add and assign tasks | | ✓ | ✓ | ✓ |
 | Submit an expense receipt, `GET /api/system/proof` | | ✓ | ✓ | ✓ |
 | Approve or reject a reimbursement (never your own) | | | ✓ | ✓ |
 | Record fundraiser income, export the ledger as CSV | | | ✓ | ✓ |
-| Create an event, delete a task, manage roles | | | | ✓ |
+| Create an event, delete a task, restock a merch size, manage roles | | | | ✓ |
 
 ### Club access and the Founding Admin
 
@@ -274,6 +276,22 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 
 `?category=` also takes a comma-separated list, so the "Merchandise & Fundraisers" card filters with `?category=MERCH_SALE,FUNDRAISER_INCOME`.
 
+**Privacy for students.** The totals, `by_category` and `semester_story` are the same for everyone. In `transactions`, a student sees their own rows in full. Every other row tied to a person comes back with `user_name: "Club Member"` (or `"Volunteer"` on a reimbursement), `user_id: null`, a masked code such as `SKY-2026-•••`, the name removed from the description, and `masked: true`. A `privacy` block reports how many rows were masked. Rows with no person attached, such as box-office takings and bake-sale collections, are shown as they are. Volunteers, the Treasurer and the Admin see every name.
+
+### Digital passes and printing
+
+| Pass | Where | Shows | Barcode |
+|---|---|---|---|
+| **Entry Pass** | Events → My Tickets → *View Digital Pass* | Event, date, venue, attendee, MEMBER/GUEST tier, price paid, *VALID FOR ENTRY* or *CHECKED IN AT …* | `TKT-…` |
+| **Official Member ID Pass** | Overview or Profile → *View Digital Pass* | Name, member ID, role, valid-until date, status | `SKY-2026-NNN` |
+| **Official Treasurer Payment Voucher** | Finance → an approved claim → *View Voucher* | Amount, receipt reference, volunteer, expense, category, approver, paid-on time, ledger row, signature lines | `RCP…` receipt reference |
+
+**Print / Save Pass** calls `window.print()`. While a pass is open, the `@media print` stylesheet hides everything except that pass, keeps its colours, and hides the buttons, so the printout or PDF is just the pass. Passes are light documents in both themes. Esc or a click outside closes one.
+
+### Admin restock
+
+`PATCH /api/merch/variants/:id/restock` (Admin only) takes `{ "add_quantity": 1–500 }` and adds it with `stock_count = stock_count + ?` inside the write lock, so a restock can't overwrite a sale that commits at the same moment. Bad quantities get `400`, an unknown size `404`, and anyone but the Admin `403`. On each product card the Admin gets a size menu (defaulting to the emptiest size), a quantity box and **+ Restock XL (+10)**.
+
 ### Sign-in, recovery and profile
 
 - **Sign in / Create account:** a full-screen split page with a show/hide password toggle. Registration asks for the password twice (8+ characters) and signs you in straight away.
@@ -287,7 +305,7 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 6 suites on better-sqlite3 (202 checks, ~15 s)
+npm run verify:fast          # all 7 suites on better-sqlite3 (229 checks, ~20 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows
@@ -301,6 +319,7 @@ npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic ro
 | `verify-phase4.js` | Schema migration, task board, reimbursements, Treasurer approvals and the no-self-approval rule, double-payout race, ledger integrity |
 | `verify-phase5.js` | Static client, offline guarantee, no file leaks, per-viewer pricing fields |
 | `verify-phase6.js` | CSV export (Treasurer/Admin only) and formula-injection guard, live index proof, role separation, account recovery and profile, the semester-at-a-glance numbers, task moves in every direction with the unassigned guard and admin delete, the Founding Admin role hierarchy with live role changes, the TREASURER role migration, and a security and edge-case sweep |
+| `verify-phase7.js` | Student ledger privacy (own rows full; others masked, even after a rename; staff unmasked), admin restock (validation, 403/404, a sold-out size selling again, 5 concurrent restocks all landing), voucher ledger links, and the passes: print stylesheet, offline guarantee, and every barcode decoded back to its code with a valid checksum |
 
 Every suite starts a real `node server.js` on a random port against a temporary database. Port 3000 and `skyline.db` are never touched.
 
@@ -316,7 +335,7 @@ lib/                      password, token, users (membership status), viewer, le
                           codes, fundraising, http (errors + parsers), testHooks
 middleware/requireAuth.js requireAuth · optionalAuth · requireRole
 routes/                   memberships · events · announcements · merch · tasks · finance · users (roles)
-public/                   index.html · styles.css · app.js (the whole UI)
+public/                   index.html · styles.css · app.js (the whole UI, including the barcode generator and passes)
 verify-*.js               Verification suites (verify-all.js runs them)
 proof-*.js                Live terminal demos
 ```

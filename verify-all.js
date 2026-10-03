@@ -7,7 +7,7 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
-const PHASES = ['verify-phase1.js', 'verify-phase2.js', 'verify-phase3.js', 'verify-phase4.js', 'verify-phase5.js', 'verify-phase6.js'];
+const PHASES = ['verify-phase1.js', 'verify-phase2.js', 'verify-phase3.js', 'verify-phase4.js', 'verify-phase5.js', 'verify-phase6.js', 'verify-phase7.js'];
 const DRIVERS = ['better-sqlite3', 'node'];
 
 const only = process.argv.find((arg) => arg.startsWith('--driver='))?.split('=')[1];

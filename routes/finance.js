@@ -23,11 +23,17 @@ const router = express.Router();
 const REIMBURSEMENT_SQL = `
   SELECT r.id, r.title, r.category, r.amount, r.receipt_reference, r.status, r.created_at,
          r.volunteer_id, v.name AS volunteer_name, v.email AS volunteer_email,
-         r.approved_by, a.name AS approved_by_name
+         r.approved_by, a.name AS approved_by_name,
+         l.id AS ledger_transaction_id, l.created_at AS paid_at
   FROM expense_reimbursements r
   JOIN users v ON v.id = r.volunteer_id
   -- LEFT JOIN: PENDING requests have approved_by = NULL and must still be listed
-  LEFT JOIN users a ON a.id = r.approved_by`;
+  LEFT JOIN users a ON a.id = r.approved_by
+  -- The payout row (for the payment voucher). Seeks idx_ledger_type_category on
+  -- (type, category); the reference and volunteer pin the one matching row.
+  LEFT JOIN ledger_transactions l
+    ON r.status = 'APPROVED_PAID' AND l.type = 'OUT' AND l.category = 'EXPENSE_REIMBURSEMENT'
+   AND l.reference_id = r.receipt_reference AND l.user_id = r.volunteer_id`;
 
 function readText(value, max) {
   const text = typeof value === 'string' ? value.trim() : '';
@@ -207,6 +213,30 @@ function semesterStory(byCategory, summary) {
   };
 }
 
+// Codes are bearer credentials: a ticket code gets someone in at the door, an
+// order code collects merch at the desk, and a membership code is one of the
+// two facts that reset a password. A masked code keeps only its prefix.
+function maskCode(code) {
+  if (!code) return code;
+  const cut = code.lastIndexOf('-');
+  return `${cut > 0 ? code.slice(0, cut + 1) : ''}•••`;
+}
+
+// Categories whose description ends in " - <member name at the time>".
+const NAME_SUFFIX_CATEGORIES = new Set(['MEMBERSHIP_DUES', 'MERCH_SALE', 'EXPENSE_REIMBURSEMENT']);
+
+// A student sees every amount, but another person's row loses their name, their
+// codes and the name inside the description. The trailing name is replaced by
+// position, so it is hidden even if that member has since changed their name.
+function maskTransaction(t) {
+  const label = t.category === 'EXPENSE_REIMBURSEMENT' ? 'Volunteer' : 'Club Member';
+  let description = t.description;
+  if (t.reference_id) description = description.split(t.reference_id).join(maskCode(t.reference_id));
+  if (t.user_name) description = description.split(t.user_name).join(label);
+  if (NAME_SUFFIX_CATEGORIES.has(t.category)) description = description.replace(/ - (?:(?! - ).)*$/, ` - ${label}`);
+  return { ...t, user_id: null, user_name: label, reference_id: maskCode(t.reference_id), description, masked: true };
+}
+
 // Open to every signed-in member: the club wants anyone on the team to see what
 // came in, what went out and what is left. Changing the books stays with the
 // Treasurer and Admin (review, fundraiser income, CSV export).
@@ -259,7 +289,16 @@ router.get('/ledger', requireAuth, (req, res) => {
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY l.created_at DESC, l.id DESC`)
     .all(...params)
-    .map((t) => ({ ...t, signed_amount: t.type === 'IN' ? t.amount : -t.amount }));
+    .map((t) => ({ ...t, signed_amount: t.type === 'IN' ? t.amount : -t.amount, masked: false }));
+
+  // Students see their own rows in full; other people's rows are masked here,
+  // on the server, so the names never reach the browser. Rows with no person
+  // attached (fundraiser takings) have nothing to hide. Staff see everything.
+  const maskOthers = req.user.role === 'STUDENT';
+  const visible = maskOthers
+    ? transactions.map((t) => (t.user_id !== null && t.user_id !== req.user.id ? maskTransaction(t) : t))
+    : transactions;
+  const maskedRows = visible.filter((t) => t.masked).length;
 
   const summary = ledgerSummary();
   res.json({
@@ -268,8 +307,9 @@ router.get('/ledger', requireAuth, (req, res) => {
     semester_story: semesterStory(byCategory, summary),
     by_category: byCategory,
     filters: { type, category: categories.length ? categories.join(',') : null },
-    count: transactions.length,
-    transactions,
+    privacy: { masked_for_viewer: maskOthers, masked_rows: maskedRows },
+    count: visible.length,
+    transactions: visible,
   });
 });
 

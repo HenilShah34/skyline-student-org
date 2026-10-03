@@ -144,6 +144,9 @@ const state = {
     lastBroadcast: null,
     selectedVariant: {},
     quantity: {},
+    restockVariant: {}, // item id -> variant id picked in the admin restock control
+    restockQty: {}, // item id -> units to add
+    pass: null, // { kind: 'ticket' | 'member' | 'voucher', id } while a digital pass is open
     orderStatus: '',
     orderQuery: '',
     campaign: null,
@@ -329,6 +332,7 @@ function actionFor({ method, path }) {
   if (path.startsWith('/api/finance/reimbursements')) return 'submit expense claims';
   if (path.startsWith('/api/finance/ledger')) return 'view the club ledger';
   if (path.startsWith('/api/memberships/lookup')) return 'look up members';
+  if (path.includes('/restock')) return 'restock merchandise';
   if (path.startsWith('/api/system')) return 'view database diagnostics';
   return 'do this';
 }
@@ -827,6 +831,51 @@ function codeChip(code) {
   return `<span class="code-chip">${esc(code)}</span>`;
 }
 
+// ---- code128:start
+// Code 128 (code set B) barcode drawn as SVG: any printable ASCII code
+// (SKY-2026-001, TKT-GALA26-0001, ORD-2026-0002, RCPT-2026-0917) becomes
+// a standard barcode that a handheld or phone scanner can read. Pure and
+// deterministic, with no library and no network. Each symbol is 6 alternating
+// bar/space widths (11 modules); the stop symbol has 7 (13 modules).
+const CODE128_PATTERNS = (
+  '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 ' +
+  '123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 ' +
+  '232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 ' +
+  '313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 ' +
+  '111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 ' +
+  '111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 ' +
+  '114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112'
+).split(' ');
+const CODE128_START_B = 104;
+const CODE128_STOP = 106;
+const BARCODE_QUIET = 10; // blank modules each side, so a scanner finds the edges
+
+// Bar/space widths for text: start B, one symbol per character, mod-103 check, stop.
+function code128Widths(text) {
+  const values = [CODE128_START_B];
+  for (const ch of String(text)) {
+    const code = ch.charCodeAt(0);
+    if (code < 32 || code > 126) throw new Error(`Code 128-B cannot encode "${ch}"`);
+    values.push(code - 32);
+  }
+  const check = values.reduce((sum, value, i) => sum + value * (i || 1), 0) % 103;
+  values.push(check, CODE128_STOP);
+  return values.map((value) => CODE128_PATTERNS[value]).join('');
+}
+
+function barcodeSvg(text, { height = 64, cls = '' } = {}) {
+  const widths = code128Widths(text);
+  let x = BARCODE_QUIET;
+  let bars = '';
+  [...widths].forEach((w, i) => {
+    if (i % 2 === 0) bars += `<rect x="${x}" width="${w}" height="${height}"/>`;
+    x += Number(w);
+  });
+  const total = x + BARCODE_QUIET;
+  return `<svg class="barcode-svg ${cls}" viewBox="0 0 ${total} ${height}" preserveAspectRatio="none" shape-rendering="crispEdges" role="img" aria-label="Barcode ${esc(text)}"><rect width="${total}" height="${height}" fill="#fff"/><g fill="#0b1020">${bars}</g></svg>`;
+}
+// ---- code128:end
+
 // ============================================================================ view: overview (scene 1)
 
 function viewOverview() {
@@ -1089,6 +1138,9 @@ function membershipCard(u) {
       <div class="mt-8">${btn('Test the double-charge guard', 'joinOrRenew', { variant: 'ghost', size: 'sm', title: 'Calls the renew endpoint anyway. The server should answer 409 Conflict.' })}</div>`;
   }
 
+  const passBtn = m.code
+    ? `<div class="mt-8">${btn('🪪 View Digital Pass', 'openPass', { data: { kind: 'member', id: u.id }, variant: 'secondary', size: 'sm', mutation: false, title: 'Your scannable Member ID pass for the door' })}</div>`
+    : '';
   return `
     <div class="member-card status-${esc(m.status)}">
       <div class="mc-top"><span class="mc-brand">SKYLINE STUDENT ASSOCIATION</span>${membershipBadge(m.status)}</div>
@@ -1100,7 +1152,7 @@ function membershipCard(u) {
       </div>
       ${active ? progress((m.days_remaining / 365) * 100) : ''}
     </div>
-    <div class="card"><div class="card-body">${action}</div></div>`;
+    <div class="card"><div class="card-body">${action}${passBtn}</div></div>`;
 }
 
 function benefitsCard() {
@@ -1221,8 +1273,9 @@ function myTickets(mine) {
         </div>
         <div class="ts-side">
           <div class="ts-code">${esc(t.ticket_code)}</div>
-          <div class="barcode" aria-hidden="true"></div>
+          ${barcodeSvg(t.ticket_code, { height: 30, cls: 'barcode-mini' })}
           ${t.checked_in ? badge(`Checked in ${fmtTime(t.checked_in_at)}`, 'green') : '<span class="small muted">Show at the door</span>'}
+          ${btn('🎟️ View Digital Pass', 'openPass', { data: { kind: 'ticket', id: e.id }, variant: 'secondary', size: 'sm', mutation: false })}
         </div>
       </div>`;
     }).join('')
@@ -1415,8 +1468,32 @@ function productCard(item) {
       </div>
       ${state.user ? `<div class="order-total"><span class="small muted">${tier === 'MEMBER' ? 'Member' : 'Regular'} price × ${qty}</span><b>${inr(unit * qty)}</b></div>` : ''}
       ${action}
+      ${isAdmin() ? restockControl(item) : ''}
     </div>
   </article>`;
+}
+
+// The size to restock: the admin's pick in the restock menu, else the emptiest
+// size (a sold-out size can't be picked in the size buttons above).
+function restockVariantId(item) {
+  const picked = Number(state.ui.restockVariant[item.id]);
+  if (item.variants.some((v) => v.variant_id === picked)) return picked;
+  return [...item.variants].sort((a, b) => a.stock_count - b.stock_count)[0]?.variant_id;
+}
+
+function restockControl(item) {
+  const variantId = restockVariantId(item);
+  const variant = item.variants.find((v) => v.variant_id === variantId);
+  const qty = state.ui.restockQty[item.id] ?? '10';
+  const options = item.variants.map((v) => `<option value="${v.variant_id}"${v.variant_id === variantId ? ' selected' : ''}>${esc(v.size)} · ${v.stock_count === 0 ? 'sold out' : `${v.stock_count} left`}</option>`).join('');
+  return `<div class="restock">
+      <div class="row-between"><span class="small strong">🛠 Admin restock</span><span class="small muted">PATCH /api/merch/variants/:id/restock</span></div>
+      <div class="restock-row">
+        <select id="restock-size-${item.id}" class="select select-sm" data-model="ui.restockVariant.${item.id}" data-rerender="1" aria-label="Size to restock for ${esc(item.name)}"${state.isLoading ? ' disabled' : ''}>${options}</select>
+        <input id="restock-qty-${item.id}" class="input select-sm restock-qty" type="number" min="1" max="500" step="1" value="${esc(qty)}" data-model="ui.restockQty.${item.id}" data-rerender="1" aria-label="Units to add">
+        ${btn(`+ Restock ${variant ? esc(variant.size) : 'size'} (+${esc(qty)})`, 'restock', { data: { item: item.id }, variant: 'secondary', size: 'sm' })}
+      </div>
+    </div>`;
 }
 
 function orderRow(o, { staff }) {
@@ -1693,6 +1770,9 @@ function reimbursementRow(r) {
   const [label, tone] = REIMBURSEMENT[r.status];
   const category = EXPENSE_CATEGORIES.find(([value]) => value === r.category)?.[1] || r.category;
   let action = '<span class="small muted">—</span>';
+  if (r.status === 'APPROVED_PAID') {
+    action = btn('🧾 View Voucher', 'openPass', { data: { kind: 'voucher', id: r.id }, variant: 'secondary', size: 'sm', mutation: false, title: 'Official payment voucher for this reimbursement' });
+  }
   if (r.status === 'PENDING') {
     if (isFinance() && r.volunteer_id === state.user.id) {
       action = `<div class="note note-amber small" style="max-width:240px"><b>Separation of duties:</b> you submitted this claim, so another Treasurer or Admin must review it.</div>
@@ -1760,7 +1840,7 @@ function ledgerSection() {
         <td>${badge(LEDGER_LABEL[t.category], LEDGER_TONE[t.category])}</td>
         <td>${esc(t.description)}</td>
         <td>${t.reference_id ? codeChip(t.reference_id) : '<span class="muted">—</span>'}</td>
-        <td>${t.user_name ? esc(t.user_name) : '<span class="muted">—</span>'}</td>
+        <td>${t.masked ? `<span class="masked" title="Hidden to protect this member's privacy">🔒 ${esc(t.user_name)}</span>` : t.user_name ? esc(t.user_name) : '<span class="muted">—</span>'}</td>
         <td class="num ${t.signed_amount < 0 ? 'amount-out' : 'amount-in'}">${signedInr(t.signed_amount)}</td>
       </tr>`).join('')
     : `<tr><td colspan="7">${emptyState('📒', 'No transactions match these filters.')}</td></tr>`;
@@ -1789,6 +1869,7 @@ function ledgerSection() {
           ${select('ui.ledgerCategory', categoryOptions, { id: 'ledger-category', attrs: 'data-reload="ledger" aria-label="Filter by category"' })}
         </div>
       </div>
+      ${L.privacy?.masked_for_viewer ? `<div class="card-body privacy-note"><div class="note note-plum">🔒 Every amount is shown, but other members' names and codes are hidden to protect their privacy (${plural(L.privacy.masked_rows, 'row')}). Your own rows are shown in full.</div></div>` : ''}
       <div class="table-wrap"><table>
         <thead><tr><th>When</th><th>Type</th><th>Category</th><th>Description</th><th>Reference</th><th>User</th><th class="num">Amount</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -1899,6 +1980,103 @@ function renderMain() {
   patch(document.getElementById('main'), html);
 }
 
+// ============================================================================ digital passes
+
+function passField(label, value) {
+  return `<div class="pass-field"><span>${label}</span><b>${value}</b></div>`;
+}
+
+function passShell(kind, title, body, code, foot) {
+  return `<article class="pass pass-${kind}" aria-labelledby="pass-title">
+      <header class="pass-head">
+        <span class="pass-emblem">${brandLogo(`pass-logo-${kind}`)}</span>
+        <div><div class="pass-org">SKYLINE STUDENT ASSOCIATION</div><div class="pass-kind" id="pass-title">${title}</div></div>
+      </header>
+      <div class="pass-body">${body}</div>
+      <div class="pass-perf" aria-hidden="true"></div>
+      <div class="pass-code">${barcodeSvg(code, { height: 72 })}<div class="pass-code-text">${esc(code)}</div><div class="pass-foot">${foot}</div></div>
+    </article>`;
+}
+
+function ticketPass(id) {
+  const e = (state.data.events || []).find((ev) => String(ev.id) === String(id));
+  const t = e?.my_ticket;
+  if (!t) return null;
+  // Tickets store the price paid; the tier is whichever price it matches.
+  const tier = e.member_price !== e.guest_price ? (t.price_paid === e.member_price ? 'MEMBER' : 'GUEST') : (state.data.eventsViewer?.tier || 'GUEST');
+  const status = t.checked_in
+    ? `<span class="pass-state used">CHECKED IN AT ${esc(fmtTime(t.checked_in_at)).toUpperCase()}</span>`
+    : '<span class="pass-state valid">VALID FOR ENTRY</span>';
+  const body = `<div><div class="pass-title">${esc(e.title)}</div><div class="pass-sub">${fmtDate(e.event_date)} · ${fmtTime(e.event_date)} · ${esc(e.location)}</div></div>
+      <div class="pass-grid">
+        ${passField('Attendee', esc(state.user.name))}
+        ${passField('Tier', `<span class="pass-pill ${tier === 'MEMBER' ? 'member' : 'guest'}">${tier}</span>`)}
+        ${passField('Price paid', inr(t.price_paid))}
+        ${passField('Status', status)}
+      </div>`;
+  return passShell('ticket', `${/gala/i.test(e.title) ? 'Spring Gala ' : ''}Entry Pass`, body, t.ticket_code, 'Show this pass at the door. Each ticket can be checked in once.');
+}
+
+function memberPass() {
+  const u = state.user;
+  const m = u.membership;
+  if (!m.code) return null;
+  const status = m.status === 'ACTIVE'
+    ? '<span class="pass-state valid">ACTIVE MEMBER</span>'
+    : `<span class="pass-state used">${esc(m.status)}</span>`;
+  const body = `<div class="pass-person"><span class="pass-avatar">${esc(initials(u.name))}</span><div><div class="pass-title">${esc(u.name)}</div><div class="pass-sub">${esc(u.email)}</div></div></div>
+      <div class="pass-grid">
+        ${passField('Member ID', `<span class="mono">${esc(m.code)}</span>`)}
+        ${passField('Role', esc(u.id === FOUNDING_ADMIN_ID && u.role === 'ADMIN' ? 'Founding Admin' : roleLabel(u.role)))}
+        ${passField('Valid until', m.expires_at ? fmtDate(m.expires_at) : '—')}
+        ${passField('Status', status)}
+      </div>`;
+  return passShell('member', 'Official Member ID Pass', body, m.code, 'Door staff scan this code, or type it into Door Member Lookup, to verify membership in under a second.');
+}
+
+function voucherPass(id) {
+  const r = (state.data.reimbursements?.reimbursements || []).find((x) => String(x.id) === String(id));
+  if (!r || r.status !== 'APPROVED_PAID') return null;
+  const category = EXPENSE_CATEGORIES.find(([value]) => value === r.category)?.[1] || r.category;
+  const ledgerRef = r.ledger_transaction_id ? `Ledger row #${r.ledger_transaction_id} · OUT · Expense reimbursement` : 'Ledger row pending';
+  const body = `<div class="pass-amount-row"><div><div class="pass-sub">Amount reimbursed</div><div class="pass-amount">${inr(r.amount)}</div></div><span class="pass-state valid">PAID</span></div>
+      <div class="pass-grid">
+        ${passField('Receipt reference', `<span class="mono">${esc(r.receipt_reference)}</span>`)}
+        ${passField('Volunteer', esc(r.volunteer_name))}
+        ${passField('Expense', esc(r.title))}
+        ${passField('Category', esc(category))}
+        ${passField('Approved by', esc(r.approved_by_name || '—'))}
+        ${passField('Paid on', r.paid_at ? fmtDateTime(r.paid_at) : '—')}
+      </div>
+      <div class="pass-ledger">${esc(ledgerRef)}</div>
+      <div class="pass-sign"><div><span>Claimant</span><b>${esc(r.volunteer_name)}</b></div><div><span>Authorised by</span><b>${esc(r.approved_by_name || '—')}</b></div></div>`;
+  return passShell('voucher', 'Official Treasurer Payment Voucher', body, r.receipt_reference, 'Approval and its ledger row were written in one transaction. The barcode carries the receipt reference.');
+}
+
+const PASS_BUILDERS = { ticket: ticketPass, member: memberPass, voucher: voucherPass };
+
+function passModal() {
+  const p = state.ui.pass;
+  const html = p && state.user ? PASS_BUILDERS[p.kind]?.(p.id) : null;
+  if (!html) return '';
+  return `<div class="pass-backdrop" data-action="closePass" data-self="1">
+    <div class="pass-dialog" role="dialog" aria-modal="true" aria-labelledby="pass-title">
+      ${html}
+      <div class="pass-actions no-print">
+        <button type="button" class="btn btn-secondary" data-action="closePass">Close</button>
+        <button type="button" class="btn btn-primary" data-action="printPass">🖨 Print / Save Pass</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderModal() {
+  const html = passModal();
+  if (!html) state.ui.pass = null;
+  document.body.classList.toggle('has-pass', Boolean(html));
+  patch(document.getElementById('modal-root'), html);
+}
+
 const TOAST_ICON = { ok: '✓', err: '!', info: 'i' };
 
 function renderToasts() {
@@ -1959,6 +2137,7 @@ function render() {
   renderNav();
   renderMain();
   renderToasts();
+  renderModal();
 }
 
 // Light/dark theme on <html data-theme>, remembered on this device.
@@ -2128,6 +2307,28 @@ const ACTIONS = {
     await loadLedger();
     renderMain();
     if (!same) document.getElementById('ledger-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  openPass: ({ kind, id }) => {
+    state.ui.pass = { kind, id };
+    renderModal();
+    document.querySelector('.pass-dialog .btn-primary')?.focus({ preventScroll: true });
+  },
+  closePass: () => {
+    state.ui.pass = null;
+    renderModal();
+  },
+  // The print stylesheet shows only the open pass (body.has-pass).
+  printPass: () => window.print(),
+  restock: ({ item }) => {
+    const found = state.data.merch?.items.find((i) => String(i.id) === String(item));
+    if (!found) return null;
+    const variantId = restockVariantId(found);
+    const qty = toNumber(state.ui.restockQty[item] ?? '10');
+    return mutate(`restock:${item}`, 'PATCH', `/api/merch/variants/${variantId}/restock`, { add_quantity: qty }, {
+      success: (d) => ({ title: 'Size Restocked', message: `${d.item.name} size ${d.variant.size}: ${d.variant.previous_stock} → ${d.variant.stock_count} in stock (+${d.variant.added}).` }),
+      onSuccess: (d) => { state.ui.restockVariant[item] = d.variant.id; },
+      refresh: () => loadMerchItems(),
+    });
   },
   ledgerClear: async () => {
     state.ui.ledgerCategory = '';
@@ -2301,6 +2502,7 @@ const RELOADERS = { desk: loadDesk, ledger: loadLedger };
 document.addEventListener('click', (event) => {
   const el = event.target.closest('[data-action]');
   if (!el || el.disabled) return;
+  if (el.dataset.self && event.target !== el) return; // backdrop: only clicks outside the dialog close it
   const handler = ACTIONS[el.dataset.action];
   if (!handler) return;
   event.preventDefault();
@@ -2334,7 +2536,8 @@ document.addEventListener('submit', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (state.ui.navOpen) ACTIONS.closeNav();
+  if (state.ui.pass) ACTIONS.closePass();
+  else if (state.ui.navOpen) ACTIONS.closeNav();
 });
 
 // ============================================================================ routing + boot

@@ -526,7 +526,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 }
 .ticket-stub .ts-code { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--plum-800); letter-spacing: 0.4px; white-space: nowrap; }
 .ticket-stub.checked .ts-side { background: var(--green-50); border-left-color: var(--green-200); }
-.barcode { height: 26px; width: 92px; background: repeating-linear-gradient(90deg, var(--slate-900) 0 2px, transparent 2px 4px, var(--slate-900) 4px 5px, transparent 5px 8px); border-radius: 2px; opacity: 0.85; }
+.barcode-svg { display: block; width: 100%; }
+.barcode-mini { height: 30px; max-width: 148px; border-radius: 3px; }
 
 .checkin-result { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid; }
 .checkin-result.ok { background: var(--green-50); border-color: var(--green-200); color: #14532d; }
@@ -1257,6 +1258,98 @@ body.logged-out .main { padding: 0; }
 .gc-sub { flex: 1; font-size: 12px; color: var(--muted); }
 .glance-card .btn { align-self: flex-start; margin-left: -6px; }
 
+/* ------------------------------------------------------------------ Admin restock (merch) */
+.restock { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--plum-100); background: var(--plum-50); }
+.restock-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 8px; align-items: center; }
+.restock-qty { text-align: center; }
+
+/* ------------------------------------------------------------------ Ledger privacy */
+.masked { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-style: italic; white-space: nowrap; }
+.privacy-note { padding-top: 0; }
+
+/* ------------------------------------------------------------------ Digital passes (modal + print) */
+.pass-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  background: rgb(2 6 23 / 0.62);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  animation: pass-fade 0.25s var(--ease);
+}
+.pass-dialog { width: min(540px, 100%); animation: pass-rise 0.35s var(--ease); }
+@keyframes pass-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pass-rise { from { transform: translateY(14px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+/* A pass is a fixed light document in both themes, so it prints the same as it looks. */
+.pass {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 40px 80px -30px rgb(2 6 23 / 0.75), 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+.pass-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 88% 0%, rgb(168 85 247 / 0.35), transparent 50%),
+    linear-gradient(135deg, #5b3a55 0%, #2a1639 45%, #1e1b4b 75%, #0f172a 100%);
+}
+.pass-emblem { width: 42px; height: 42px; flex-shrink: 0; filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.35)); }
+.pass-emblem svg { width: 100%; height: 100%; display: block; }
+.pass-org { font-size: 10.5px; font-weight: 800; letter-spacing: 0.18em; opacity: 0.8; }
+.pass-kind { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+.pass-voucher .pass-head { background: radial-gradient(circle at 88% 0%, rgb(16 185 129 / 0.35), transparent 50%), linear-gradient(135deg, #064e3b 0%, #0f3d3a 45%, #1e1b4b 80%, #0f172a 100%); }
+.pass-member .pass-head { background: radial-gradient(circle at 88% 0%, rgb(251 191 36 / 0.3), transparent 50%), linear-gradient(135deg, #5b3a55 0%, #3b1f4f 50%, #0f172a 100%); }
+.pass-body { display: flex; flex-direction: column; gap: 16px; padding: 20px 22px 18px; }
+.pass-title { font-size: 22px; font-weight: 800; line-height: 1.2; letter-spacing: -0.01em; }
+.pass-sub { margin-top: 2px; font-size: 13px; color: #475569; }
+.pass-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.pass-field { min-width: 0; }
+.pass-field > span { display: block; margin-bottom: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; }
+.pass-field b { font-size: 15px; overflow-wrap: anywhere; }
+.pass .mono { font-family: var(--mono); letter-spacing: 0.04em; }
+.pass-state { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; }
+.pass-state.valid { background: #dcfce7; color: #166534; box-shadow: inset 0 0 0 1px #86efac; }
+.pass-state.used { background: #fef3c7; color: #92400e; box-shadow: inset 0 0 0 1px #fcd34d; }
+.pass-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; }
+.pass-pill.member { background: #f3e8ff; color: #6b21a8; box-shadow: inset 0 0 0 1px #d8b4fe; }
+.pass-pill.guest { background: #ffedd5; color: #9a3412; box-shadow: inset 0 0 0 1px #fdba74; }
+.pass-person { display: flex; align-items: center; gap: 14px; }
+.pass-avatar { width: 54px; height: 54px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; font-size: 19px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #a0729a, #4f46e5); box-shadow: 0 0 0 3px #fff, 0 0 0 5px #fbbf24; }
+.pass-amount-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.pass-amount { font-size: 36px; font-weight: 800; letter-spacing: -0.02em; color: #065f46; font-variant-numeric: tabular-nums; }
+.pass-ledger { font-family: var(--mono); font-size: 12px; color: #334155; padding: 8px 10px; border-radius: 8px; background: #f1f5f9; }
+.pass-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.pass-sign div { padding-top: 22px; border-top: 1px solid #94a3b8; font-size: 12px; color: #475569; }
+.pass-sign span { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; }
+.pass-perf { margin: 0 22px; border-top: 2px dashed #cbd5e1; }
+.pass-code { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 22px 20px; }
+.pass-code .barcode-svg { max-width: 400px; height: 76px; }
+.pass-code-text { font-family: var(--mono); font-size: 15px; font-weight: 700; letter-spacing: 0.2em; }
+.pass-foot { max-width: 400px; font-size: 11.5px; color: #64748b; text-align: center; }
+.pass-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
+@media print {
+  @page { margin: 12mm; }
+  /* With a pass open, the page prints only that pass. */
+  body.has-pass > :not(#modal-root) { display: none !important; }
+  body.has-pass { background: #fff !important; }
+  body.has-pass .pass-backdrop { position: static; display: block; padding: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; animation: none; }
+  body.has-pass .pass-dialog { width: 100%; max-width: 150mm; margin: 0 auto; animation: none; }
+  body.has-pass .pass { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; }
+  .no-print { display: none !important; }
+  .pass, .pass * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
 /* Browser autofill (Chrome/Edge) paints its own grey/blue fill; cover it with the input colour */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -1378,6 +1471,7 @@ input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px #ffffff inset, 0
 :root[data-theme="dark"] .eq-term.left { background: linear-gradient(135deg, rgb(168 85 247 / 0.2), rgb(79 70 229 / 0.1)); border-color: rgb(196 181 253 / 0.34); color: #ede9fe; box-shadow: 0 10px 28px -16px rgb(168 85 247 / 0.7); }
 :root[data-theme="dark"] .stack-bar .seg + .seg { box-shadow: inset 2px 0 0 rgb(11 16 32 / 0.85); }
 :root[data-theme="dark"] .glance-card { --tone: #c08ab3; }
+:root[data-theme="dark"] .restock { background: rgb(192 138 179 / 0.08); border-color: rgb(192 138 179 / 0.3); }
 :root[data-theme="dark"] .glance-card.tone-blue { --tone: #60a5fa; }
 :root[data-theme="dark"] .glance-card.tone-teal { --tone: #2dd4bf; }
 :root[data-theme="dark"] .glance-card.tone-red { --tone: #fb7185; }
@@ -1474,4 +1568,10 @@ input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px #ffffff inset, 0
   .glance-cards { grid-template-columns: minmax(0, 1fr); }
   .access-control .select { min-width: 0; width: 100%; }
   .uc-chevron { display: none; }
+}
+@media (max-width: 520px) {
+  .restock-row { grid-template-columns: minmax(0, 1fr) 64px; }
+  .restock-row .btn { grid-column: 1 / -1; }
+  .pass-grid { grid-template-columns: minmax(0, 1fr); }
+  .pass-amount { font-size: 30px; }
 }

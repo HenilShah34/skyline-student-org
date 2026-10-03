@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { db, withTransaction } = require('../db');
-const { HttpError, validationFailed, parseInteger, parseSearchQuery, escapeLike } = require('../lib/http');
+const { HttpError, validationFailed, parseInteger, parsePositiveInt, parseSearchQuery, escapeLike } = require('../lib/http');
 const { uniqueCode } = require('../lib/codes');
 const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
@@ -12,6 +12,7 @@ const { requireAuth, optionalAuth, requireRole } = require('../middleware/requir
 
 const SIZES = ['S', 'M', 'L', 'XL'];
 const MAX_QUANTITY = 5;
+const MAX_RESTOCK = 500; // units per restock call
 const FULFILLMENT_STATUSES = ['PAID_PENDING_PICKUP', 'PICKED_UP'];
 const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const ORDER_CODE_RE = /^[A-Z0-9-]{4,40}$/;
@@ -285,6 +286,34 @@ router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'TREA
   });
 
   res.json({ message: `Handed over to ${order.user_name}`, order: toOrderView(order) });
+});
+
+// Admin restock of one size. The increment happens in SQL (stock_count + ?)
+// inside the write lock, so it can't lose a sale that commits at the same time.
+router.patch('/variants/:id/restock', requireAuth, requireRole('ADMIN'), (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  const add = parseInteger(req.body?.add_quantity);
+
+  const details = {};
+  if (!id) details.id = 'Variant id must be a positive integer';
+  if (add === null || add < 1 || add > MAX_RESTOCK) details.add_quantity = `add_quantity must be a whole number from 1 to ${MAX_RESTOCK}`;
+  if (Object.keys(details).length) throw validationFailed(details);
+
+  const { before, after, totalStock } = withTransaction(() => {
+    const current = db.prepare(`${VARIANT_WITH_ITEM_SQL} WHERE v.id = ?`).get(id);
+    if (!current) throw new HttpError(404, 'Variant not found');
+    db.prepare('UPDATE merch_variants SET stock_count = stock_count + ? WHERE id = ?').run(add, id);
+    return {
+      before: current,
+      after: db.prepare(`${VARIANT_WITH_ITEM_SQL} WHERE v.id = ?`).get(id),
+      totalStock: db.prepare('SELECT SUM(stock_count) AS n FROM merch_variants WHERE item_id = ?').get(current.item_id).n,
+    };
+  });
+
+  res.json({
+    variant: { id: after.id, size: after.size, stock_count: after.stock_count, previous_stock: before.stock_count, added: add },
+    item: { id: after.item_id, name: after.item_name, total_stock: totalStock },
+  });
 });
 
 module.exports = router;
