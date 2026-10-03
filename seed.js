@@ -2,11 +2,9 @@
 
 const { db, withTransaction, TABLES } = require('./db');
 const { hashPassword } = require('./lib/password');
+const { DAY_MS, MEMBERSHIP_FEE, MEMBERSHIP_TERM_DAYS } = require('./lib/users');
 
 const DEMO_PASSWORD = 'skyline123';
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MEMBERSHIP_TERM_DAYS = 365;
-const MEMBERSHIP_DUES = 300;
 const BAKE_SALE = 'Autumn Bake Sale 2026';
 
 // Rohan paid 355 days ago, so his membership expires in 10 days and the
@@ -67,7 +65,7 @@ function insertSeedData(passwordHashes) {
     );
     users[a.key] = { id: Number(lastInsertRowid), name: a.name };
     if (a.membershipCode) {
-      insertLedger.run('IN', 'MEMBERSHIP_DUES', MEMBERSHIP_DUES, `Annual membership dues — ${a.name} (${a.membershipCode})`, a.membershipCode, users[a.key].id, iso(paidAt));
+      insertLedger.run('IN', 'MEMBERSHIP_DUES', MEMBERSHIP_FEE, `Annual Membership Dues - ${a.name}`, a.membershipCode, users[a.key].id, iso(paidAt));
     }
   }
 

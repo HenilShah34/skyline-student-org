@@ -5,71 +5,13 @@
 // pragmas, constraints, transactions and index usage directly. The server is
 // always stopped and the temp database removed, pass or fail.
 
-const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
+const { check, section, summarize, tempDbPath, removeDb, startServer, stopServer } = require('./verify-helpers');
 
-const DB_FILE = path.join(os.tmpdir(), `skyline-verify-${process.pid}-${Date.now()}.db`);
+const DB_FILE = tempDbPath('verify1');
 process.env.DB_PATH = DB_FILE; // must be set before ./db is required
-
-const results = [];
-function check(name, pass, detail) {
-  results.push({ name, pass });
-  console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? `\n          ${detail}` : ''}`);
-}
-function section(title) {
-  console.log(`\n${title}`);
-}
-
-function startServer() {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-      env: { ...process.env, PORT: '0', DB_PATH: DB_FILE },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let output = '';
-    const timer = setTimeout(() => reject(new Error(`server did not start within 20s:\n${output}`)), 20000);
-    child.stdout.on('data', (chunk) => {
-      output += chunk;
-      const match = /listening on http:\/\/localhost:(\d+)/.exec(output);
-      if (match) {
-        clearTimeout(timer);
-        resolve({ child, port: Number(match[1]) });
-      }
-    });
-    child.stderr.on('data', (chunk) => {
-      output += chunk;
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited early (code ${code}):\n${output}`));
-    });
-  });
-}
-
-async function stopServer(child) {
-  if (!child || child.exitCode !== null) return;
-  const exited = once(child, 'exit');
-  child.kill();
-  await exited;
-}
-
-function makeClient(port) {
-  return async function api(method, route, { body, token, rawBody } = {}) {
-    const headers = {};
-    if (body !== undefined || rawBody !== undefined) headers['content-type'] = 'application/json';
-    if (token) headers.authorization = `Bearer ${token}`;
-    const res = await fetch(`http://127.0.0.1:${port}${route}`, {
-      method,
-      headers,
-      body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
-    });
-    return { status: res.status, body: await res.json().catch(() => null) };
-  };
-}
 
 function forgeRole(token, role) {
   const [encoded, signature] = token.split('.');
@@ -263,10 +205,12 @@ async function verifyDatabase() {
     check(label, /SEARCH \S+ USING (COVERING )?INDEX/.test(detail), detail);
   }
 
-  const expected = ['idx_users_membership_code', 'idx_tickets_event_user', 'idx_tickets_code',
-    'idx_merch_variants_item_size', 'idx_tasks_campaign_status', 'idx_ledger_type_category'];
+  const explicit = ['idx_tickets_event_user', 'idx_tasks_campaign_status', 'idx_ledger_type_category'];
+  const redundant = ['idx_users_membership_code', 'idx_tickets_code', 'idx_merch_variants_item_size'];
   const present = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all().map((r) => r.name);
-  check('all 6 named indexes exist', expected.every((n) => present.includes(n)));
+  check('3 explicit indexes exist; redundant copies of UNIQUE autoindexes are gone',
+    explicit.every((n) => present.includes(n)) && !redundant.some((n) => present.includes(n)),
+    present.join(', '));
 
   db.close();
 }
@@ -275,10 +219,10 @@ async function main() {
   console.log(`Phase 1 verification (temp DB: ${DB_FILE})`);
   let child = null;
   try {
-    const server = await startServer();
+    const server = await startServer(DB_FILE);
     child = server.child;
     console.log(`Test server started (pid ${child.pid}, port ${server.port})`);
-    await verifyApi(makeClient(server.port));
+    await verifyApi(server.api);
     verifyAuthUnits();
     await verifyDatabase();
   } catch (err) {
@@ -286,15 +230,9 @@ async function main() {
   } finally {
     await stopServer(child);
     if (child) console.log(`\nTest server stopped (pid ${child.pid}); port 3000 was never used.`);
-    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(DB_FILE + suffix, { force: true });
+    removeDb(DB_FILE);
   }
-
-  const failed = results.filter((r) => !r.pass);
-  console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
-  if (failed.length) {
-    console.log(`Failed: ${failed.map((r) => r.name).join('; ')}`);
-    process.exitCode = 1;
-  }
+  summarize();
 }
 
 main();

@@ -7,6 +7,10 @@ const { sign } = require('./lib/token');
 const { toPublicUser, membershipSnapshot } = require('./lib/users');
 const { requireAuth } = require('./middleware/requireAuth');
 const { seedIfEmpty, DEMO_ACCOUNTS, DEMO_PASSWORD } = require('./seed');
+const membershipsRouter = require('./routes/memberships');
+const eventsRouter = require('./routes/events');
+const announcementsRouter = require('./routes/announcements');
+const merchRouter = require('./routes/merch');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -107,11 +111,16 @@ app.get('/api/auth/demo-accounts', (req, res) => {
   res.json({ password: DEMO_PASSWORD, accounts });
 });
 
+app.use('/api', membershipsRouter);
+app.use('/api', eventsRouter);
+app.use('/api/announcements', announcementsRouter);
+app.use('/api/merch', merchRouter);
+
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Malformed JSON body' });
-  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });
+  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message, ...err.extra });
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });

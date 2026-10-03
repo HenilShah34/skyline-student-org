@@ -130,12 +130,22 @@ CREATE TABLE IF NOT EXISTS ledger_transactions (
   created_at   TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_membership_code    ON users(membership_code);
-CREATE INDEX IF NOT EXISTS idx_tickets_event_user       ON tickets(event_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_tickets_code             ON tickets(ticket_code);
-CREATE INDEX IF NOT EXISTS idx_merch_variants_item_size ON merch_variants(item_id, size);
-CREATE INDEX IF NOT EXISTS idx_tasks_campaign_status    ON fundraiser_tasks(campaign_name, status);
-CREATE INDEX IF NOT EXISTS idx_ledger_type_category     ON ledger_transactions(type, category, created_at);
+-- Explicit B-tree indexes, only where no UNIQUE constraint already provides one.
+-- users(email), users(membership_code), tickets(ticket_code) and
+-- merch_variants(item_id, size) are served by the sqlite_autoindex_* B-trees that
+-- SQLite builds for their UNIQUE constraints, so they need no index of their own.
+--   idx_tickets_event_user    duplicate-ticket check on purchase; per-event door
+--                             roster and attendance stats (event_id prefix)
+--   idx_tasks_campaign_status fundraiser board: a campaign's tasks by status
+--   idx_ledger_type_category  treasury totals by type + category over a date range
+CREATE INDEX IF NOT EXISTS idx_tickets_event_user    ON tickets(event_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_campaign_status ON fundraiser_tasks(campaign_name, status);
+CREATE INDEX IF NOT EXISTS idx_ledger_type_category  ON ledger_transactions(type, category, created_at);
+
+-- Phase 1 databases carry redundant copies of the UNIQUE autoindexes; remove them.
+DROP INDEX IF EXISTS idx_users_membership_code;
+DROP INDEX IF EXISTS idx_tickets_code;
+DROP INDEX IF EXISTS idx_merch_variants_item_size;
 `;
 
 let driver = null;
@@ -278,6 +288,7 @@ module.exports = {
   connect,
   withTransaction,
   isBusy,
+  sleepSync,
   TABLES,
   DB_PATH,
 };

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node seed.js",
-    "verify": "node verify-phase1.js"
+    "verify": "node verify-all.js",
+    "verify:fast": "node verify-all.js --driver=better-sqlite3"
   },
   "engines": {
     "node": ">=22.5"
