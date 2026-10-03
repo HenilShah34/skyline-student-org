@@ -3,7 +3,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { validationFailed, parseSearchQuery, escapeLike } = require('../lib/http');
-const { membershipSnapshot } = require('../lib/users');
+const { loadViewer } = require('../lib/viewer');
 const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
 
 const CATEGORIES = ['MEETING', 'DEADLINE', 'EVENT', 'GENERAL'];
@@ -20,22 +20,13 @@ const SELECT_WITH_AUTHOR = `
   FROM announcements a
   JOIN users u ON u.id = a.author_id`;
 
-const ANONYMOUS = { authenticated: false, role: null, membership_status: 'NONE', can_view_members_only: false };
-
-// Role and membership come from the live row, not the token, so a member who
-// renewed (or lapsed) since logging in sees the right archive.
 function viewerContext(tokenUser) {
-  if (!tokenUser) return ANONYMOUS;
-  const user = db
-    .prepare('SELECT role, membership_code, membership_status, membership_expires_at FROM users WHERE id = ?')
-    .get(tokenUser.id);
-  if (!user) return ANONYMOUS;
-  const status = membershipSnapshot(user).status;
+  const viewer = loadViewer(tokenUser);
   return {
-    authenticated: true,
-    role: user.role,
-    membership_status: status,
-    can_view_members_only: STAFF_ROLES.has(user.role) || status === 'ACTIVE',
+    authenticated: viewer.authenticated,
+    role: viewer.role,
+    membership_status: viewer.membership_status,
+    can_view_members_only: STAFF_ROLES.has(viewer.role) || viewer.is_member,
   };
 }
 

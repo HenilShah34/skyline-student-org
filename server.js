@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const express = require('express');
 const { db, driver, withTransaction, TABLES } = require('./db');
 const { hashPassword, verifyPassword, getDummyHash } = require('./lib/password');
@@ -18,6 +19,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const app = express();
 app.disable('x-powered-by');
+// Only public/ is web-reachable; server code, the database and dotfiles are not.
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '100kb' }));
 
 function issueToken(user) {

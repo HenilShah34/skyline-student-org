@@ -99,6 +99,16 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
+// People a task can be assigned to, for the "Add Task" picker. Staff only.
+router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+  const users = db
+    .prepare(`
+      SELECT id, name, role FROM users
+      ORDER BY CASE role WHEN 'VOLUNTEER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, name`)
+    .all();
+  res.json({ users });
+});
+
 router.post('/', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
   const body = req.body || {};
   const campaign = body.campaign_name === undefined

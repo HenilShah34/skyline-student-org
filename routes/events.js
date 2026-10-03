@@ -7,7 +7,8 @@ const { uniqueCode } = require('../lib/codes');
 const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
-const { requireAuth, requireRole } = require('../middleware/requireAuth');
+const { loadViewer } = require('../lib/viewer');
+const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
 
 const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
 const MAX_SEATS = 100000;
@@ -100,10 +101,40 @@ const EVENTS_WITH_STATS_SQL = `
     GROUP BY event_id
   ) t ON t.event_id = e.id`;
 
-router.get('/events', (req, res) => {
+// Public, but a signed-in caller also gets the tier and price the purchase
+// endpoint will charge them and their own ticket for each event, all in the
+// same single query.
+router.get('/events', optionalAuth, (req, res) => {
   const now = Date.now();
-  const rows = db.prepare(`${EVENTS_WITH_STATS_SQL} ORDER BY e.event_date ASC, e.id ASC`).all();
-  res.json({ events: rows.map((row) => toEventView(row, now)) });
+  const viewer = loadViewer(req.user);
+  const tier = viewer.authenticated ? (viewer.is_member ? 'MEMBER' : 'GUEST') : null;
+
+  const rows = db
+    .prepare(`
+      SELECT s.*, mt.ticket_code AS my_ticket_code, mt.price_paid AS my_price_paid,
+             mt.checked_in AS my_checked_in, mt.checked_in_at AS my_checked_in_at, mt.created_at AS my_ticket_created_at
+      FROM (${EVENTS_WITH_STATS_SQL}) s
+      -- LEFT JOIN: most events have no ticket for this caller (and none for visitors)
+      LEFT JOIN tickets mt ON mt.event_id = s.id AND mt.user_id = ?
+      ORDER BY s.event_date ASC, s.id ASC`)
+    .all(viewer.id);
+
+  res.json({
+    viewer: { authenticated: viewer.authenticated, membership_status: viewer.membership_status, tier },
+    events: rows.map((row) => ({
+      ...toEventView(row, now),
+      your_price: tier === null ? null : tier === 'MEMBER' ? row.member_price : row.guest_price,
+      my_ticket: row.my_ticket_code
+        ? {
+          ticket_code: row.my_ticket_code,
+          price_paid: row.my_price_paid,
+          checked_in: row.my_checked_in === 1,
+          checked_in_at: row.my_checked_in_at,
+          created_at: row.my_ticket_created_at,
+        }
+        : null,
+    })),
+  });
 });
 
 router.post('/events', requireAuth, requireRole('ADMIN'), (req, res) => {

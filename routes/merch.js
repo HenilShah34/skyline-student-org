@@ -7,7 +7,8 @@ const { uniqueCode } = require('../lib/codes');
 const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
-const { requireAuth, requireRole } = require('../middleware/requireAuth');
+const { loadViewer } = require('../lib/viewer');
+const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
 
 const SIZES = ['S', 'M', 'L', 'XL'];
 const MAX_QUANTITY = 5;
@@ -53,7 +54,11 @@ function toOrderView(row) {
   };
 }
 
-router.get('/items', (req, res) => {
+// Public; a signed-in caller also gets the tier and unit price that
+// POST /orders will charge them.
+router.get('/items', optionalAuth, (req, res) => {
+  const viewer = loadViewer(req.user);
+  const tier = viewer.authenticated ? (viewer.is_member ? 'MEMBER' : 'REGULAR') : null;
   const items = db
     .prepare(`
       SELECT i.*, COALESCE(s.units_sold, 0) AS units_sold
@@ -78,6 +83,7 @@ router.get('/items', (req, res) => {
   }
 
   res.json({
+    viewer: { authenticated: viewer.authenticated, membership_status: viewer.membership_status, tier },
     items: items.map((item) => {
       const itemVariants = variantsByItem.get(item.id);
       return {
@@ -87,6 +93,7 @@ router.get('/items', (req, res) => {
         category: item.category,
         member_price: item.member_price,
         regular_price: item.regular_price,
+        your_price: tier === null ? null : tier === 'MEMBER' ? item.member_price : item.regular_price,
         created_at: item.created_at,
         total_stock: itemVariants.reduce((sum, v) => sum + v.stock_count, 0),
         units_sold: item.units_sold,
