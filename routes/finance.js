@@ -263,4 +263,53 @@ router.post('/fundraiser-income', requireAuth, requireRole('ADMIN'), (req, res) 
   res.status(201).json({ transaction, summary: ledgerSummary() });
 });
 
+// ---------------------------------------------------------------- CSV export
+
+const CSV_COLUMNS = ['id', 'created_at', 'type', 'category', 'signed_amount', 'reference_id', 'member_name', 'description'];
+
+// One RFC 4180 field. Text that a spreadsheet would treat as a formula
+// (=, +, -, @, tab, CR) gets a leading ' so opening the file can't run it.
+// Numbers are written as-is so they stay numeric.
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return String(value);
+  let text = String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function csvRow(values) {
+  return values.map(csvCell).join(',');
+}
+
+// The whole book, oldest first, plus TOTAL_IN / TOTAL_OUT / NET_BALANCE rows
+// that use the same 8 columns (label in "id", amount in "signed_amount").
+router.get('/ledger/export.csv', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+  const rows = db
+    .prepare(`
+      SELECT l.id, l.created_at, l.type, l.category,
+             CASE WHEN l.type = 'IN' THEN l.amount ELSE -l.amount END AS signed_amount,
+             l.reference_id, u.name AS member_name, l.description
+      FROM ledger_transactions l
+      -- LEFT JOIN: box-office sales and fundraiser income have no user attached
+      LEFT JOIN users u ON u.id = l.user_id
+      ORDER BY l.created_at ASC, l.id ASC`)
+    .all();
+  const summary = ledgerSummary();
+
+  const lines = [
+    csvRow(CSV_COLUMNS),
+    ...rows.map((r) => csvRow(CSV_COLUMNS.map((c) => r[c]))),
+    csvRow(['TOTAL_IN', '', '', '', summary.total_in, '', '', '']),
+    csvRow(['TOTAL_OUT', '', '', '', -summary.total_out, '', '', '']),
+    csvRow(['NET_BALANCE', '', '', '', summary.net_balance, '', '', '']),
+  ];
+
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', 'attachment; filename="skyline-semester-ledger.csv"');
+  res.set('Cache-Control', 'no-store');
+  // BOM so Excel reads the file as UTF-8 (₹, em dashes); RFC 4180 uses CRLF.
+  res.send(`﻿${lines.join('\r\n')}\r\n`);
+});
+
 module.exports = router;

@@ -1050,6 +1050,29 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .inspector-detail pre { background: rgb(15 23 42 / 0.72); }
 .live-dot { animation: pulse-green 2s ease-out infinite; }
 
+/* Inspector bar + DB proof button and panel */
+.inspector-head { display: flex; align-items: center; }
+.inspector-head .inspector-bar { flex: 1; min-width: 0; }
+.proof-btn {
+  margin-right: 12px;
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgb(196 181 253 / 0.45);
+  background: linear-gradient(135deg, rgb(167 139 250 / 0.28), rgb(99 102 241 / 0.22));
+  color: #ede9fe;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.25s var(--ease), transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.proof-btn:hover { transform: translateY(-1px); background: linear-gradient(135deg, rgb(167 139 250 / 0.45), rgb(99 102 241 / 0.38)); box-shadow: 0 0 0 3px rgb(167 139 250 / 0.18); }
+.modal-wide { width: min(940px, 100%); max-height: 88vh; overflow-y: auto; }
+.modal-wide .kpi-label { overflow-wrap: anywhere; }
+.modal-wide .card-head { position: sticky; top: 0; z-index: 1; }
+.plan { font-family: var(--mono); font-size: 12px; color: var(--slate-800); background: var(--slate-100); padding: 2px 6px; border-radius: 5px; display: inline-block; }
+
 /* Login modal */
 .modal-backdrop { background: rgb(15 23 42 / 0.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 .modal .card-head { background: var(--cta); }

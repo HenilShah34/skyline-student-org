@@ -92,6 +92,7 @@ function blankData() {
     assignees: null,
     reimbursements: null,
     ledger: null,
+    proof: null,
   };
 }
 
@@ -138,6 +139,7 @@ const state = {
     ledgerCategory: '',
     authMode: null,
     authError: null,
+    proofOpen: false,
   },
   forms: blankForms(),
   inspector: { open: false, entries: [], selectedId: null, seq: 0 },
@@ -271,8 +273,10 @@ function redact(body) {
   return Object.fromEntries(Object.entries(body).map(([k, v]) => [k, /password/i.test(k) ? '••••••••' : v]));
 }
 
-async function api(method, path, body, { mutation = false } = {}) {
-  const headers = { Accept: 'application/json' };
+// raw: true returns a successful response as a Blob (file downloads); the
+// inspector then shows a short summary instead of the file contents.
+async function api(method, path, body, { mutation = false, raw = false } = {}) {
+  const headers = { Accept: raw ? '*/*' : 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = state.token;
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -280,14 +284,20 @@ async function api(method, path, body, { mutation = false } = {}) {
   const started = performance.now();
   let status = 0;
   let data = null;
+  let blob = null;
   try {
     const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     status = res.status;
-    const text = await res.text();
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = text;
+    if (raw && res.ok) {
+      blob = await res.blob();
+      data = { file: true, content_type: res.headers.get('content-type'), bytes: blob.size, disposition: res.headers.get('content-disposition') };
+    } else {
+      const text = await res.text();
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = text;
+      }
     }
   } catch {
     data = { error: 'Network error: is the Skyline server running?' };
@@ -310,7 +320,7 @@ async function api(method, path, body, { mutation = false } = {}) {
   if (mutation || state.inspector.selectedId === null) state.inspector.selectedId = entry.id;
   renderInspector();
 
-  const result = { ok: status >= 200 && status < 300, status, data, entry, sessionExpired: false };
+  const result = { ok: status >= 200 && status < 300, status, data, blob, entry, sessionExpired: false };
   if (status === 401 && token && token === state.token && !path.startsWith('/api/auth/login')) {
     result.sessionExpired = true; // reported once here, not again by the caller
     clearSession();
@@ -336,16 +346,16 @@ function toastIfError(result) {
 // Every write goes through here: one in-flight mutation at a time, a labelled
 // spinner on the clicked button, then an authoritative re-fetch, never a local
 // guess. A 409 also re-fetches, because it means the data changed under us.
-async function mutate(key, method, path, body, { success, refresh, onSuccess, onError } = {}) {
+async function mutate(key, method, path, body, { success, refresh, onSuccess, onError, raw = false } = {}) {
   if (state.isLoading) return null;
   state.isLoading = true;
   state.pendingAction = key;
   render();
 
-  const res = await api(method, path, body, { mutation: true });
+  const res = await api(method, path, body, { mutation: true, raw });
   try {
     if (res.ok) {
-      onSuccess?.(res.data);
+      onSuccess?.(res.data, res);
       toast(res, typeof success === 'function' ? success(res.data) : success || STATUS_TEXT[res.status]);
       await (refresh ? refresh() : reloadActiveTab());
     } else {
@@ -1443,9 +1453,12 @@ function ledgerSection() {
       <div class="kpi kpi-lg tone-red"><div class="kpi-label">Total Money Out</div><div class="kpi-value">${inr(s.total_out)}</div><div class="kpi-sub">approved reimbursements</div></div>
       <div class="kpi kpi-lg tone-plum"><div class="kpi-label">Net Club Balance</div><div class="kpi-value">${inr(s.net_balance)}</div><div class="kpi-sub">${plural(s.transaction_count, 'ledger row')} · ${fmtDateTime(L.generated_at)}</div></div>
     </div>
-    <div class="integrity">
-      <span class="${balanced ? 'ok' : 'bad'}">${balanced ? '✓' : '✗'} In − Out = Net (${inr(s.total_in)} − ${inr(s.total_out)} = ${inr(s.net_balance)})</span>
-      <span class="${categoriesMatch ? 'ok' : 'bad'}">${categoriesMatch ? '✓' : '✗'} Categories add up to the totals</span>
+    <div class="row-between">
+      <div class="integrity">
+        <span class="${balanced ? 'ok' : 'bad'}">${balanced ? '✓' : '✗'} In − Out = Net (${inr(s.total_in)} − ${inr(s.total_out)} = ${inr(s.net_balance)})</span>
+        <span class="${categoriesMatch ? 'ok' : 'bad'}">${categoriesMatch ? '✓' : '✗'} Categories add up to the totals</span>
+      </div>
+      ${btn('⬇ Export Semester Books (CSV)', 'exportLedger', { title: 'Download the full ledger with totals as a CSV file' })}
     </div>
     <div class="${isAdmin() ? 'split' : ''}">
       <section class="card">
@@ -1583,10 +1596,15 @@ function renderInspector() {
     body = `<div class="inspector-body"><ul class="inspector-list">${list}</ul><div class="inspector-detail">${detail}</div></div>`;
   }
 
-  patch(document.getElementById('inspector'), `<button type="button" class="inspector-bar" data-action="toggleInspector" aria-expanded="${open}">
-      <span class="title"><span class="live-dot"></span>Live API Inspector</span>${summary}
-      <span class="chev">${plural(entries.length, 'request')} · ${open ? 'Hide ▼' : 'Show ▲'}</span>
-    </button>${body}`);
+  const proofButton = isStaff()
+    ? '<button type="button" class="proof-btn" data-action="openProof" title="Live PRAGMA, table counts and EXPLAIN QUERY PLAN from the running database">🗄 DB &amp; Index Proof</button>'
+    : '';
+  patch(document.getElementById('inspector'), `<div class="inspector-head">
+      <button type="button" class="inspector-bar" data-action="toggleInspector" aria-expanded="${open}">
+        <span class="title"><span class="live-dot"></span>Live API Inspector</span>${summary}
+        <span class="chev">${plural(entries.length, 'request')} · ${open ? 'Hide ▼' : 'Show ▲'}</span>
+      </button>${proofButton}
+    </div>${body}`);
 }
 
 function renderToasts() {
@@ -1596,9 +1614,57 @@ function renderToasts() {
     </div>`).join(''));
 }
 
+// Live database proof (GET /api/system/proof): pragmas, query plans, counts.
+function proofModal() {
+  const p = state.data.proof;
+  let body = loadingBlock('Reading the live database…');
+  if (p) {
+    const plans = p.query_plans.map((q) => `<tr>
+        <td><b>${esc(q.name)}</b><div class="small muted">${esc(q.expected_index)}</div></td>
+        <td><code class="plan">${esc(q.plan)}</code></td>
+        <td>${q.uses_index && !q.full_scan ? badge('✓ Index search', 'green') : badge('✗ Full scan', 'red')}</td>
+      </tr>`).join('');
+    const counts = Object.entries(p.table_counts)
+      .map(([table, n]) => `<div class="kpi"><div class="kpi-label">${esc(table)}</div><div class="kpi-value">${n}</div></div>`).join('');
+    const l = p.ledger_integrity;
+    body = `<div class="card-body stack" style="gap:16px">
+        <div class="row">
+          ${badge(`foreign_keys = ${p.pragmas.foreign_keys}`, p.pragmas.foreign_keys === 1 ? 'green' : 'red')}
+          ${badge(`journal_mode = ${p.pragmas.journal_mode}`, p.pragmas.journal_mode === 'wal' ? 'green' : 'red')}
+          ${badge(`${p.driver} · SQLite ${p.sqlite_version}`, 'slate')}
+          ${p.all_queries_use_index ? badge('All 5 lookups use a B-tree index', 'plum') : badge('Some lookups scan', 'red')}
+        </div>
+        <div><h3 class="small strong">EXPLAIN QUERY PLAN on the key lookups</h3>
+          <div class="table-wrap mt-8"><table><thead><tr><th>Lookup</th><th>Live plan from SQLite</th><th>Result</th></tr></thead><tbody>${plans}</tbody></table></div></div>
+        <div class="note ${l.balanced ? 'note-green' : 'note-amber'}">${l.balanced ? '✓' : '✗'} Ledger integrity: in ${inr(l.total_in)} − out ${inr(l.total_out)} = net ${inr(l.net_balance)} across ${plural(l.transaction_count, 'row')}</div>
+        <div><h3 class="small strong">Live row counts (10 tables)</h3><div class="kpis mt-8">${counts}</div></div>
+        <div class="small muted">Read at ${fmtDateTime(p.generated_at)} · GET /api/system/proof</div>
+      </div>`;
+  }
+  return `<div class="modal-backdrop" data-action="closeModal" data-self="1">
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="proof-title">
+      <div class="card-head"><h2 id="proof-title">🗄 Database &amp; Index Proof</h2>
+        <div class="row">${btn('Refresh', 'openProof', { variant: 'secondary', size: 'sm', mutation: false })}<button type="button" class="icon-btn" data-action="closeModal" aria-label="Close">×</button></div></div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+// Hands a downloaded Blob to the browser as a file.
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function renderModal() {
   const mode = state.ui.authMode;
-  if (!mode) return patch(document.getElementById('modal-root'), '');
+  if (!mode) return patch(document.getElementById('modal-root'), state.ui.proofOpen ? proofModal() : '');
   const demo = state.demo.password ? `<div class="note note-plum">Demo password for every persona: <code>${esc(state.demo.password)}</code></div>` : '';
   const form = mode === 'login'
     ? `<form class="card-body form" data-form="login">
@@ -1690,6 +1756,7 @@ const ACTIONS = {
   },
   closeModal: () => {
     state.ui.authMode = null;
+    state.ui.proofOpen = false;
     renderModal();
   },
   joinOrRenew: () => joinOrRenew(),
@@ -1795,6 +1862,24 @@ const ACTIONS = {
     }
   },
   dismissToast: ({ id }) => dismissToast(Number(id)),
+  exportLedger: () => mutate('exportLedger', 'GET', '/api/finance/ledger/export.csv', undefined, {
+    raw: true,
+    success: (d) => `Semester books exported · ${(d.bytes / 1024).toFixed(1)} KB CSV downloaded`,
+    onSuccess: (_data, res) => saveBlob(res.blob, 'skyline-semester-ledger.csv'),
+    refresh: () => null, // a download changes nothing on the server
+  }),
+  openProof: async () => {
+    state.ui.proofOpen = true;
+    state.data.proof = null;
+    renderModal();
+    const res = await api('GET', '/api/system/proof');
+    if (res.ok) state.data.proof = res.data;
+    else {
+      state.ui.proofOpen = false;
+      toastIfError(res);
+    }
+    renderModal();
+  },
 };
 
 const FORMS = {
@@ -1931,7 +2016,7 @@ document.addEventListener('submit', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && state.ui.authMode) ACTIONS.closeModal();
+  if (event.key === 'Escape' && (state.ui.authMode || state.ui.proofOpen)) ACTIONS.closeModal();
 });
 
 // ============================================================================ routing + boot

@@ -4,3 +4,4 @@ node_modules/
 *.db-shm
 .env
 VIVA_MASTER_GUIDE.md
+GUIDE.md

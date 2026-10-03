@@ -6,7 +6,7 @@ const { db, driver, withTransaction, TABLES } = require('./db');
 const { hashPassword, verifyPassword, getDummyHash } = require('./lib/password');
 const { sign } = require('./lib/token');
 const { toPublicUser, membershipSnapshot } = require('./lib/users');
-const { requireAuth } = require('./middleware/requireAuth');
+const { requireAuth, requireRole } = require('./middleware/requireAuth');
 const { seedIfEmpty, DEMO_ACCOUNTS, DEMO_PASSWORD } = require('./seed');
 const membershipsRouter = require('./routes/memberships');
 const eventsRouter = require('./routes/events');
@@ -114,6 +114,58 @@ app.get('/api/auth/demo-accounts', (req, res) => {
     return { name: row.name, email: row.email, role: row.role, persona: a.persona, membership: membershipSnapshot(row) };
   });
   res.json({ password: DEMO_PASSWORD, accounts });
+});
+
+// The indexed lookups the app depends on, with sample parameters. Single-table
+// queries without ORDER BY, so each plan line shows exactly how SQLite finds rows.
+const PROOF_QUERIES = [
+  { name: 'tickets by (event_id, user_id)', index: 'idx_tickets_event_user', sql: 'SELECT ticket_code FROM tickets WHERE event_id = ? AND user_id = ?', params: [1, 1] },
+  { name: 'tickets by ticket_code', index: 'UNIQUE(ticket_code) autoindex', sql: 'SELECT id, checked_in FROM tickets WHERE ticket_code = ?', params: ['TKT-E1-ABC234'] },
+  { name: 'merch_variants by (item_id, size)', index: 'UNIQUE(item_id, size) autoindex', sql: 'SELECT id, stock_count FROM merch_variants WHERE item_id = ? AND size = ?', params: [1, 'M'] },
+  { name: 'fundraiser_tasks by (campaign_name, status)', index: 'idx_tasks_campaign_status', sql: 'SELECT id, title FROM fundraiser_tasks WHERE campaign_name = ? AND status = ?', params: ['Spring Bake Sale', 'TODO'] },
+  { name: 'ledger_transactions by (type, category, created_at)', index: 'idx_ledger_type_category', sql: 'SELECT id, amount FROM ledger_transactions WHERE type = ? AND category = ? AND created_at >= ?', params: ['IN', 'TICKET_SALE', '2026-01-01'] },
+];
+
+// Live architecture proof for demos: pragmas, row counts, query plans and the
+// ledger balance check, all read from the running database.
+app.get('/api/system/proof', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+  const tableCounts = {};
+  for (const table of TABLES) tableCounts[table] = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+
+  const queryPlans = PROOF_QUERIES.map((q) => {
+    const detail = db.prepare(`EXPLAIN QUERY PLAN ${q.sql}`).all(...q.params).map((r) => r.detail).join(' | ');
+    return {
+      name: q.name,
+      expected_index: q.index,
+      sql: q.sql,
+      plan: detail,
+      uses_index: /USING (COVERING )?INDEX/.test(detail),
+      full_scan: /\bSCAN\b/.test(detail),
+    };
+  });
+
+  const ledger = db
+    .prepare(`
+      SELECT COALESCE(SUM(CASE WHEN type = 'IN' THEN amount ELSE 0 END), 0) AS total_in,
+             COALESCE(SUM(CASE WHEN type = 'OUT' THEN amount ELSE 0 END), 0) AS total_out,
+             COALESCE(SUM(CASE WHEN type = 'IN' THEN amount ELSE -amount END), 0) AS net_balance,
+             COUNT(*) AS transaction_count
+      FROM ledger_transactions`)
+    .get();
+
+  res.json({
+    generated_at: new Date().toISOString(),
+    driver,
+    sqlite_version: db.prepare('SELECT sqlite_version() AS v').get().v,
+    pragmas: {
+      foreign_keys: db.prepare('PRAGMA foreign_keys').get().foreign_keys,
+      journal_mode: db.prepare('PRAGMA journal_mode').get().journal_mode,
+    },
+    table_counts: tableCounts,
+    query_plans: queryPlans,
+    all_queries_use_index: queryPlans.every((p) => p.uses_index && !p.full_scan),
+    ledger_integrity: { ...ledger, balanced: ledger.total_in - ledger.total_out === ledger.net_balance },
+  });
 });
 
 app.use('/api', membershipsRouter);

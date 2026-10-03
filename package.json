@@ -8,7 +8,9 @@
     "start": "node server.js",
     "seed": "node seed.js",
     "verify": "node verify-all.js",
-    "verify:fast": "node verify-all.js --driver=better-sqlite3"
+    "verify:fast": "node verify-all.js --driver=better-sqlite3",
+    "proof:concurrency": "node proof-concurrency.js",
+    "proof:indexes": "node proof-indexes.js"
   },
   "engines": {
     "node": ">=22.5"
