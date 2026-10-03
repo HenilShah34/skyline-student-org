@@ -94,7 +94,9 @@ CREATE TABLE IF NOT EXISTS merch_orders (
   quantity           INTEGER NOT NULL CHECK (quantity > 0),
   total_paid         INTEGER NOT NULL,
   fulfillment_status TEXT NOT NULL DEFAULT 'PAID_PENDING_PICKUP' CHECK (fulfillment_status IN ('PAID_PENDING_PICKUP', 'PICKED_UP')),
-  created_at         TEXT NOT NULL
+  created_at         TEXT NOT NULL,
+  picked_up_at       TEXT,
+  picked_up_by       INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS fundraiser_tasks (
@@ -279,13 +281,38 @@ function runSavepoint(fn, conn, depth) {
   }
 }
 
+// Columns added after their table first shipped. CREATE TABLE above already has
+// them for new databases; older databases get them via ALTER TABLE on startup.
+// SQLite appends added columns, so both paths end with the same column order.
+const ADDED_COLUMNS = [
+  { table: 'merch_orders', column: 'picked_up_at', definition: 'TEXT' },
+  { table: 'merch_orders', column: 'picked_up_by', definition: 'INTEGER REFERENCES users(id) ON DELETE SET NULL' },
+];
+
+function addMissingColumns(conn) {
+  for (const { table, column, definition } of ADDED_COLUMNS) {
+    const exists = conn.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    if (!exists) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+// Idempotent: creates missing tables and indexes, drops retired indexes, adds
+// missing columns. All of it commits together or not at all.
+function applySchema(conn) {
+  withTransaction(() => {
+    conn.exec(SCHEMA);
+    addMissingColumns(conn);
+  }, conn);
+}
+
 const db = connect(DB_PATH);
-withTransaction(() => db.exec(SCHEMA));
+applySchema(db);
 
 module.exports = {
   db,
   driver,
   connect,
+  applySchema,
   withTransaction,
   isBusy,
   sleepSync,

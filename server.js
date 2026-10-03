@@ -11,6 +11,8 @@ const membershipsRouter = require('./routes/memberships');
 const eventsRouter = require('./routes/events');
 const announcementsRouter = require('./routes/announcements');
 const merchRouter = require('./routes/merch');
+const tasksRouter = require('./routes/tasks');
+const financeRouter = require('./routes/finance');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -115,6 +117,8 @@ app.use('/api', membershipsRouter);
 app.use('/api', eventsRouter);
 app.use('/api/announcements', announcementsRouter);
 app.use('/api/merch', merchRouter);
+app.use('/api/tasks', tasksRouter);
+app.use('/api/finance', financeRouter);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

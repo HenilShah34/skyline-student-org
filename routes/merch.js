@@ -5,7 +5,7 @@ const { db, withTransaction } = require('../db');
 const { HttpError, validationFailed, parseInteger, parseSearchQuery, escapeLike } = require('../lib/http');
 const { uniqueCode } = require('../lib/codes');
 const { recordTransaction } = require('../lib/ledger');
-const { holdPurchaseForTests } = require('../lib/testHooks');
+const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
 const { requireAuth, requireRole } = require('../middleware/requireAuth');
 
@@ -24,12 +24,15 @@ const VARIANT_WITH_ITEM_SQL = `
 
 const ORDER_SQL = `
   SELECT o.id, o.order_code, o.quantity, o.total_paid, o.fulfillment_status, o.created_at,
+         o.picked_up_at, o.picked_up_by, p.name AS picked_up_by_name,
          v.id AS variant_id, v.size, i.id AS item_id, i.name AS item_name,
          u.id AS user_id, u.name AS user_name, u.email AS user_email
   FROM merch_orders o
   JOIN merch_variants v ON v.id = o.variant_id
   JOIN merch_items i ON i.id = v.item_id
-  JOIN users u ON u.id = o.user_id`;
+  JOIN users u ON u.id = o.user_id
+  -- LEFT JOIN: orders still awaiting pickup have picked_up_by = NULL
+  LEFT JOIN users p ON p.id = o.picked_up_by`;
 
 function toOrderView(row) {
   return {
@@ -45,6 +48,8 @@ function toOrderView(row) {
     fulfillment_status: row.fulfillment_status,
     created_at: row.created_at,
     buyer: { id: row.user_id, name: row.user_name, email: row.user_email },
+    picked_up_at: row.picked_up_at,
+    picked_up_by: row.picked_up_by ? { id: row.picked_up_by, name: row.picked_up_by_name } : null,
   };
 }
 
@@ -152,7 +157,7 @@ router.post('/orders', requireAuth, (req, res) => {
     const unitPrice = tier === 'MEMBER' ? variant.member_price : variant.regular_price;
     const totalPaid = unitPrice * input.quantity;
 
-    holdPurchaseForTests();
+    holdForRaceTest();
 
     const stock = db
       .prepare('UPDATE merch_variants SET stock_count = stock_count - ? WHERE id = ? AND stock_count >= ?')
@@ -255,12 +260,19 @@ router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'ADMI
     const row = db.prepare(`${ORDER_SQL} WHERE o.order_code = ?`).get(code);
     if (!row) throw new HttpError(404, 'Order not found');
     if (row.fulfillment_status === 'PICKED_UP') {
-      throw new HttpError(409, 'Order already picked up', { order_code: row.order_code, buyer: { name: row.user_name } });
+      throw new HttpError(409, 'Order already picked up', {
+        order_code: row.order_code,
+        buyer: { name: row.user_name },
+        picked_up_at: row.picked_up_at,
+        picked_up_by: row.picked_up_by_name,
+      });
     }
 
     const update = db
-      .prepare(`UPDATE merch_orders SET fulfillment_status = 'PICKED_UP' WHERE id = ? AND fulfillment_status = 'PAID_PENDING_PICKUP'`)
-      .run(row.id);
+      .prepare(`
+        UPDATE merch_orders SET fulfillment_status = 'PICKED_UP', picked_up_at = ?, picked_up_by = ?
+        WHERE id = ? AND fulfillment_status = 'PAID_PENDING_PICKUP'`)
+      .run(new Date().toISOString(), req.user.id, row.id);
     if (update.changes !== 1) throw new HttpError(409, 'Order already picked up');
     return db.prepare(`${ORDER_SQL} WHERE o.id = ?`).get(row.id);
   });

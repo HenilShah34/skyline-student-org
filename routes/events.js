@@ -5,7 +5,7 @@ const { db, withTransaction } = require('../db');
 const { HttpError, validationFailed, parsePositiveInt, parseInteger, parseSearchQuery, escapeLike } = require('../lib/http');
 const { uniqueCode } = require('../lib/codes');
 const { recordTransaction } = require('../lib/ledger');
-const { holdPurchaseForTests } = require('../lib/testHooks');
+const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
 const { requireAuth, requireRole } = require('../middleware/requireAuth');
 
@@ -146,7 +146,7 @@ router.post('/events/:id/tickets', requireAuth, (req, res) => {
     const tier = membershipSnapshot(user, now).status === 'ACTIVE' ? 'MEMBER' : 'GUEST';
     const pricePaid = tier === 'MEMBER' ? event.member_price : event.guest_price;
 
-    holdPurchaseForTests();
+    holdForRaceTest();
 
     const seat = db.prepare('UPDATE events SET seats_left = seats_left - 1 WHERE id = ? AND seats_left > 0').run(eventId);
     if (seat.changes !== 1) throw new HttpError(409, 'Event is sold out');

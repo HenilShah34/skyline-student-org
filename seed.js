@@ -3,9 +3,9 @@
 const { db, withTransaction, TABLES } = require('./db');
 const { hashPassword } = require('./lib/password');
 const { DAY_MS, MEMBERSHIP_FEE, MEMBERSHIP_TERM_DAYS } = require('./lib/users');
+const { DEFAULT_CAMPAIGN: BAKE_SALE, localDate } = require('./lib/fundraising');
 
 const DEMO_PASSWORD = 'skyline123';
-const BAKE_SALE = 'Autumn Bake Sale 2026';
 
 // Rohan paid 355 days ago, so his membership expires in 10 days and the
 // renewal reminder shows up on first login.
@@ -40,7 +40,7 @@ function insertSeedData(passwordHashes) {
     d.setHours(hour, minute, 0, 0);
     return d.toISOString();
   };
-  const dueIn = (days) => daysAhead(days).slice(0, 10);
+  const dueIn = (days) => localDate(now + days * DAY_MS);
 
   const insertLedger = db.prepare(`
     INSERT INTO ledger_transactions (type, category, amount, description, reference_id, user_id, created_at)
@@ -156,8 +156,8 @@ function insertSeedData(passwordHashes) {
     VALUES (?, ?, ?, ?, ?, ?)`);
   const insertVariant = db.prepare('INSERT INTO merch_variants (item_id, size, stock_count) VALUES (?, ?, ?)');
   const insertOrder = db.prepare(`
-    INSERT INTO merch_orders (order_code, user_id, variant_id, quantity, total_paid, fulfillment_status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    INSERT INTO merch_orders (order_code, user_id, variant_id, quantity, total_paid, fulfillment_status, created_at, picked_up_at, picked_up_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const merch = [
     {
@@ -186,14 +186,17 @@ function insertSeedData(passwordHashes) {
   }
 
   const orders = [
-    { code: 'ORD-2026-0001', user: 'rohan', variant: 'hoodie:M', quantity: 1, status: 'PICKED_UP', daysAgo: 12 },
-    { code: 'ORD-2026-0002', user: 'priya', variant: 'tee:L', quantity: 2, status: 'PAID_PENDING_PICKUP', daysAgo: 3 },
+    { code: 'ORD-2026-0001', user: 'rohan', variant: 'hoodie:M', quantity: 1, status: 'PICKED_UP', daysAgo: 12, pickedUp: { by: 'priya', daysAgo: 11 } },
+    { code: 'ORD-2026-0002', user: 'priya', variant: 'tee:L', quantity: 2, status: 'PAID_PENDING_PICKUP', daysAgo: 3, pickedUp: null },
   ];
   for (const o of orders) {
     const variant = variants[o.variant];
     const user = users[o.user];
     const total = variant.item.memberPrice * o.quantity;
-    insertOrder.run(o.code, user.id, variant.id, o.quantity, total, o.status, daysAgo(o.daysAgo));
+    insertOrder.run(
+      o.code, user.id, variant.id, o.quantity, total, o.status, daysAgo(o.daysAgo),
+      o.pickedUp ? daysAgo(o.pickedUp.daysAgo) : null, o.pickedUp ? users[o.pickedUp.by].id : null,
+    );
     insertLedger.run('IN', 'MERCH_SALE', total, `Order ${o.code} — ${o.quantity} × ${variant.item.name} (${o.variant.split(':')[1]})`, o.code, user.id, daysAgo(o.daysAgo));
   }
 
@@ -219,15 +222,20 @@ function insertSeedData(passwordHashes) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
   const paidExpense = {
     title: 'Gala décor — fairy lights and drapes',
-    category: 'DECOR',
+    category: 'EVENT_COSTS',
     amount: 2350,
+    receipt: 'RCPT-2026-0917',
   };
-  const paidExpenseId = Number(insertExpense.run(
-    users.priya.id, paidExpense.title, paidExpense.category, paidExpense.amount, 'RCPT-2026-0917', 'APPROVED_PAID', users.aaryan.id, daysAgo(10),
-  ).lastInsertRowid);
-  insertLedger.run('OUT', 'EXPENSE_REIMBURSEMENT', paidExpense.amount, `Reimbursement to ${users.priya.name} — ${paidExpense.title}`, `EXP-${paidExpenseId}`, users.priya.id, daysAgo(9));
+  insertExpense.run(
+    users.priya.id, paidExpense.title, paidExpense.category, paidExpense.amount, paidExpense.receipt, 'APPROVED_PAID', users.aaryan.id, daysAgo(10),
+  );
+  insertLedger.run(
+    'OUT', 'EXPENSE_REIMBURSEMENT', paidExpense.amount,
+    `Reimbursement: ${paidExpense.title} (${paidExpense.receipt}) - ${users.priya.name}`,
+    paidExpense.receipt, users.priya.id, daysAgo(9),
+  );
 
-  insertExpense.run(users.priya.id, 'Bake sale ingredients — first batch', 'SUPPLIES', 1640, 'RCPT-2026-1001', 'PENDING', null, daysAgo(1));
+  insertExpense.run(users.priya.id, 'Bake sale ingredients — first batch', 'FUNDRAISER_SUPPLIES', 1640, 'RCPT-2026-1001', 'PENDING', null, daysAgo(1));
 }
 
 // Seeds only when the users table is empty, unless reset is true (wipe + reseed).
