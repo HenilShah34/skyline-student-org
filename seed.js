@@ -10,8 +10,8 @@ const DEMO_PASSWORD = 'skyline123';
 // Rohan paid 355 days ago, so his membership expires in 10 days and the
 // renewal reminder shows up on first login.
 const DEMO_ACCOUNTS = [
-  { key: 'aaryan', name: 'Aaryan Mehta', email: 'aaryan@skyline.edu', role: 'ADMIN', persona: 'Admin / Treasurer', membershipCode: 'SKY-2026-001', joinedDaysAgo: 400, duesPaidDaysAgo: 60 },
-  { key: 'priya', name: 'Priya Nair', email: 'priya@skyline.edu', role: 'VOLUNTEER', persona: 'Volunteer Lead', membershipCode: 'SKY-2026-002', joinedDaysAgo: 380, duesPaidDaysAgo: 58 },
+  { key: 'vikram', name: 'Vikram Desai', email: 'vikram@skyline.edu', role: 'ADMIN', persona: 'Admin / Treasurer', membershipCode: 'SKY-2026-001', joinedDaysAgo: 400, duesPaidDaysAgo: 60 },
+  { key: 'neha', name: 'Neha Sharma', email: 'neha@skyline.edu', role: 'VOLUNTEER', persona: 'Volunteer Lead', membershipCode: 'SKY-2026-002', joinedDaysAgo: 380, duesPaidDaysAgo: 58 },
   { key: 'rohan', name: 'Rohan Verma', email: 'rohan@skyline.edu', role: 'STUDENT', persona: 'Active Member (renewal due in 10 days)', membershipCode: 'SKY-2026-003', joinedDaysAgo: 360, duesPaidDaysAgo: 355 },
   { key: 'kabir', name: 'Kabir Singh', email: 'kabir@skyline.edu', role: 'STUDENT', persona: 'Non-member Student', membershipCode: null, joinedDaysAgo: 5, duesPaidDaysAgo: null },
 ];
@@ -90,8 +90,8 @@ function insertSeedData(passwordHashes) {
       // Sold at the physical counter before online ticketing launched.
       boxOffice: { member: 32, guest: 24, referenceId: 'GALA26-BOXOFFICE', daysAgo: 20 },
       tickets: [
-        { code: 'TKT-GALA26-0001', user: 'aaryan', daysAgo: 14 },
-        { code: 'TKT-GALA26-0002', user: 'priya', daysAgo: 13 },
+        { code: 'TKT-GALA26-0001', user: 'vikram', daysAgo: 14 },
+        { code: 'TKT-GALA26-0002', user: 'neha', daysAgo: 13 },
       ],
     },
     {
@@ -137,17 +137,17 @@ function insertSeedData(passwordHashes) {
   insertAnnouncement.run(
     'General Body Meeting — Budget Review',
     'All members and volunteers: join us this Friday at 5:30 PM in Seminar Hall B. Agenda: Q3 ledger review, Gala logistics, and the bake sale roster.',
-    'MEETING', 'ALL', users.aaryan.id, daysAgo(2),
+    'MEETING', 'ALL', users.vikram.id, daysAgo(2),
   );
   insertAnnouncement.run(
     'Membership renewals are open',
     'If your membership expires this month, renew from your dashboard to keep member pricing on Gala tickets and merch. It takes under a minute.',
-    'DEADLINE', 'MEMBERS_ONLY', users.aaryan.id, daysAgo(1),
+    'DEADLINE', 'MEMBERS_ONLY', users.vikram.id, daysAgo(1),
   );
   insertAnnouncement.run(
     'Spring Annual Gala 2026 — under 50 seats left',
     'Members pay ₹250 and guests ₹500. Grab your ticket before the Grand Hall fills up.',
-    'EVENT', 'ALL', users.priya.id, daysAgo(0.5),
+    'EVENT', 'ALL', users.neha.id, daysAgo(0.5),
   );
 
   // Merch catalogue. Stock counts are what remains after the seeded orders.
@@ -186,8 +186,8 @@ function insertSeedData(passwordHashes) {
   }
 
   const orders = [
-    { code: 'ORD-2026-0001', user: 'rohan', variant: 'hoodie:M', quantity: 1, status: 'PICKED_UP', daysAgo: 12, pickedUp: { by: 'priya', daysAgo: 11 } },
-    { code: 'ORD-2026-0002', user: 'priya', variant: 'tee:L', quantity: 2, status: 'PAID_PENDING_PICKUP', daysAgo: 3, pickedUp: null },
+    { code: 'ORD-2026-0001', user: 'rohan', variant: 'hoodie:M', quantity: 1, status: 'PICKED_UP', daysAgo: 12, pickedUp: { by: 'neha', daysAgo: 11 } },
+    { code: 'ORD-2026-0002', user: 'neha', variant: 'tee:L', quantity: 2, status: 'PAID_PENDING_PICKUP', daysAgo: 3, pickedUp: null },
   ];
   for (const o of orders) {
     const variant = variants[o.variant];
@@ -205,10 +205,10 @@ function insertSeedData(passwordHashes) {
     INSERT INTO fundraiser_tasks (campaign_name, title, assigned_to, status, due_date, created_at)
     VALUES (?, ?, ?, ?, ?, ?)`);
   const tasks = [
-    { title: 'Book the Student Centre atrium stall', user: 'priya', status: 'DONE', due: -2 },
-    { title: 'Buy flour, butter & chocolate from the wholesale market', user: 'priya', status: 'IN_PROGRESS', due: 2 },
+    { title: 'Book the Student Centre atrium stall', user: 'neha', status: 'DONE', due: -2 },
+    { title: 'Buy flour, butter & chocolate from the wholesale market', user: 'neha', status: 'IN_PROGRESS', due: 2 },
     { title: 'Design posters and the Instagram story', user: 'rohan', status: 'IN_PROGRESS', due: 3 },
-    { title: 'Recruit 8 bakers for the Saturday shift', user: 'priya', status: 'TODO', due: 4 },
+    { title: 'Recruit 8 bakers for the Saturday shift', user: 'neha', status: 'TODO', due: 4 },
     { title: 'Set up the UPI QR code and cash float', user: null, status: 'TODO', due: 6 },
   ];
   for (const t of tasks) {
@@ -227,15 +227,15 @@ function insertSeedData(passwordHashes) {
     receipt: 'RCPT-2026-0917',
   };
   insertExpense.run(
-    users.priya.id, paidExpense.title, paidExpense.category, paidExpense.amount, paidExpense.receipt, 'APPROVED_PAID', users.aaryan.id, daysAgo(10),
+    users.neha.id, paidExpense.title, paidExpense.category, paidExpense.amount, paidExpense.receipt, 'APPROVED_PAID', users.vikram.id, daysAgo(10),
   );
   insertLedger.run(
     'OUT', 'EXPENSE_REIMBURSEMENT', paidExpense.amount,
-    `Reimbursement: ${paidExpense.title} (${paidExpense.receipt}) - ${users.priya.name}`,
-    paidExpense.receipt, users.priya.id, daysAgo(9),
+    `Reimbursement: ${paidExpense.title} (${paidExpense.receipt}) - ${users.neha.name}`,
+    paidExpense.receipt, users.neha.id, daysAgo(9),
   );
 
-  insertExpense.run(users.priya.id, 'Bake sale ingredients — first batch', 'FUNDRAISER_SUPPLIES', 1640, 'RCPT-2026-1001', 'PENDING', null, daysAgo(1));
+  insertExpense.run(users.neha.id, 'Bake sale ingredients — first batch', 'FUNDRAISER_SUPPLIES', 1640, 'RCPT-2026-1001', 'PENDING', null, daysAgo(1));
 }
 
 // Seeds only when the users table is empty, unless reset is true (wipe + reseed).

@@ -29,27 +29,27 @@ async function verifyApi(api) {
       health.body.database.journal_mode === 'wal' && health.body.tables.users === 4,
     `driver=${health.body?.database?.driver} rows=${JSON.stringify(health.body?.tables)}`);
 
-  const login = await api('POST', '/api/auth/login', { body: { email: 'aaryan@skyline.edu', password: 'skyline123' } });
+  const login = await api('POST', '/api/auth/login', { body: { email: 'vikram@skyline.edu', password: 'skyline123' } });
   check('POST /api/auth/login (valid) -> 200 + token, no password_hash leaked',
     login.status === 200 && typeof login.body.token === 'string' && login.body.user.role === 'ADMIN' &&
       !('password_hash' in login.body.user),
     `status=${login.status} role=${login.body?.user?.role}`);
 
-  const wrongPw = await api('POST', '/api/auth/login', { body: { email: 'aaryan@skyline.edu', password: 'wrong-password' } });
+  const wrongPw = await api('POST', '/api/auth/login', { body: { email: 'vikram@skyline.edu', password: 'wrong-password' } });
   check('POST /api/auth/login (wrong password) -> 401', wrongPw.status === 401, `body=${JSON.stringify(wrongPw.body)}`);
 
   const unknown = await api('POST', '/api/auth/login', { body: { email: 'nobody@skyline.edu', password: 'skyline123' } });
   check('POST /api/auth/login (unknown email) -> same generic 401',
     unknown.status === 401 && unknown.body.error === wrongPw.body.error);
 
-  const missing = await api('POST', '/api/auth/login', { body: { email: 'aaryan@skyline.edu' } });
+  const missing = await api('POST', '/api/auth/login', { body: { email: 'vikram@skyline.edu' } });
   check('POST /api/auth/login (missing password) -> 400', missing.status === 400, `body=${JSON.stringify(missing.body)}`);
 
   const badJson = await api('POST', '/api/auth/login', { rawBody: '{"email":' });
   check('POST /api/auth/login (malformed JSON) -> 400', badJson.status === 400);
 
   const me = await api('GET', '/api/auth/me', { token: login.body.token });
-  check('GET /api/auth/me (valid token) -> 200', me.status === 200 && me.body.user.email === 'aaryan@skyline.edu');
+  check('GET /api/auth/me (valid token) -> 200', me.status === 200 && me.body.user.email === 'vikram@skyline.edu');
 
   const rohan = await api('POST', '/api/auth/login', { body: { email: 'rohan@skyline.edu', password: 'skyline123' } });
   const rohanMe = await api('GET', '/api/auth/me', { token: rohan.body.token });

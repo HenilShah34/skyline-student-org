@@ -75,7 +75,7 @@ async function run(server) {
   const login = async (email) => (await api('POST', '/api/auth/login', { body: { email, password: 'skyline123' } })).body.token;
   const rohan = await login('rohan@skyline.edu');
   const kabir = await login('kabir@skyline.edu');
-  const priya = await login('priya@skyline.edu');
+  const neha = await login('neha@skyline.edu');
 
   const anonEvents = await api('GET', '/api/events');
   const rohanEvents = await api('GET', '/api/events', { token: rohan });
@@ -97,7 +97,7 @@ async function run(server) {
     rohanMerch.body.viewer.tier === 'MEMBER' && hoodieOf(rohanMerch).your_price === 899 &&
       kabirMerch.body.viewer.tier === 'REGULAR' && hoodieOf(kabirMerch).your_price === 1199);
 
-  const assignees = await api('GET', '/api/tasks/assignees', { token: priya });
+  const assignees = await api('GET', '/api/tasks/assignees', { token: neha });
   const studentAssignees = await api('GET', '/api/tasks/assignees', { token: kabir });
   check('GET /api/tasks/assignees: staff get the picker list; students -> 403',
     assignees.status === 200 && assignees.body.users.length === 4 && assignees.body.users.every((u) => u.id && u.name && u.role) &&

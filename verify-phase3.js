@@ -44,8 +44,8 @@ async function run() {
   const login = async (email) =>
     (await api('POST', '/api/auth/login', { body: { email, password: 'skyline123' } })).body.token;
   const tokens = {
-    aaryan: await login('aaryan@skyline.edu'),
-    priya: await login('priya@skyline.edu'),
+    vikram: await login('vikram@skyline.edu'),
+    neha: await login('neha@skyline.edu'),
     rohan: await login('rohan@skyline.edu'),
     kabir: await login('kabir@skyline.edu'),
   };
@@ -67,14 +67,14 @@ async function run() {
       rohanMe.expires_at === first.body.user.membership.expires_at,
     `body=${JSON.stringify(second.body)}`);
 
-  const aaryanRenew = await api('POST', '/api/memberships/join-or-renew', { token: tokens.aaryan });
-  check('Aaryan (305 days left) renewing early -> 409', aaryanRenew.status === 409,
-    `days_remaining=${aaryanRenew.body?.days_remaining} renewal_opens_at=${aaryanRenew.body?.renewal_opens_at}`);
+  const vikramRenew = await api('POST', '/api/memberships/join-or-renew', { token: tokens.vikram });
+  check('Vikram (305 days left) renewing early -> 409', vikramRenew.status === 409,
+    `days_remaining=${vikramRenew.body?.days_remaining} renewal_opens_at=${vikramRenew.body?.renewal_opens_at}`);
 
   // ------------------------------------------------------------ Scene 3
   section('2) Announcements: members-only visibility');
   const membersPost = await api('POST', '/api/announcements', {
-    token: tokens.priya,
+    token: tokens.neha,
     body: {
       title: 'Members-only: Gala seating preview',
       content: 'Members get first pick of Gala tables. The seating chart opens Friday at 6 PM; bring your membership code.',
@@ -83,13 +83,13 @@ async function run() {
     },
   });
   const secret = membersPost.body?.announcement;
-  check('Priya posts MEMBERS_ONLY -> 201 with author details, recipients_notified = 3 active members',
-    membersPost.status === 201 && secret.author_name === 'Priya Nair' && secret.author_role === 'VOLUNTEER' &&
+  check('Neha posts MEMBERS_ONLY -> 201 with author details, recipients_notified = 3 active members',
+    membersPost.status === 201 && secret.author_name === 'Neha Sharma' && secret.author_role === 'VOLUNTEER' &&
       secret.target_audience === 'MEMBERS_ONLY' && membersPost.body.recipients_notified === 3,
     `id=${secret?.id} recipients_notified=${membersPost.body?.recipients_notified}`);
 
   const publicPost = await api('POST', '/api/announcements', {
-    token: tokens.aaryan,
+    token: tokens.vikram,
     body: { title: 'Bake sale volunteers needed', content: 'Sign up at the club desk for a Saturday shift.', category: 'general' },
   });
   check('ADMIN posts with default audience -> ALL, recipients_notified = every account (4)',
@@ -128,7 +128,7 @@ async function run() {
   check('Student Kabir posting -> 403', kabirPost.status === 403);
 
   const badPost = await api('POST', '/api/announcements', {
-    token: tokens.priya,
+    token: tokens.neha,
     body: { title: '  ', content: '', category: 'PARTY', target_audience: 'EVERYONE' },
   });
   const badFilter = await api('GET', '/api/announcements?category=PARTY');
@@ -235,21 +235,21 @@ async function run() {
   // ------------------------------------------------------------ Pickup
   section('5) Order pickup at the club desk');
   const rohanCode = rohanOrder.body.order.order_code;
-  const pickup = await api('PATCH', `/api/merch/orders/${rohanCode}/pickup`, { token: tokens.priya });
-  check(`Priya marks ${rohanCode} PICKED_UP -> 200`,
+  const pickup = await api('PATCH', `/api/merch/orders/${rohanCode}/pickup`, { token: tokens.neha });
+  check(`Neha marks ${rohanCode} PICKED_UP -> 200`,
     pickup.status === 200 && pickup.body.order.fulfillment_status === 'PICKED_UP' && pickup.body.order.buyer.name === 'Rohan Verma',
     `message="${pickup.body?.message}"`);
 
-  const pickupAgain = await api('PATCH', `/api/merch/orders/${rohanCode}/pickup`, { token: tokens.priya });
+  const pickupAgain = await api('PATCH', `/api/merch/orders/${rohanCode}/pickup`, { token: tokens.neha });
   check('second pickup -> 409 "Order already picked up"',
     pickupAgain.status === 409 && pickupAgain.body.error === 'Order already picked up', `body=${JSON.stringify(pickupAgain.body)}`);
 
   const kabirCode = kabirOrder.body.order.order_code;
   const kabirPickup = await api('PATCH', `/api/merch/orders/${kabirCode}/pickup`, { token: tokens.kabir });
-  const unknownPickup = await api('PATCH', '/api/merch/orders/ORD-M1-ZZZZZZ/pickup', { token: tokens.priya });
+  const unknownPickup = await api('PATCH', '/api/merch/orders/ORD-M1-ZZZZZZ/pickup', { token: tokens.neha });
   check('student marking pickup -> 403; unknown order code -> 404', kabirPickup.status === 403 && unknownPickup.status === 404);
 
-  const pending = await api('GET', '/api/merch/orders?status=PAID_PENDING_PICKUP', { token: tokens.priya });
+  const pending = await api('GET', '/api/merch/orders?status=PAID_PENDING_PICKUP', { token: tokens.neha });
   const s = pending.body?.summary;
   check('staff ?status=PAID_PENDING_PICKUP lists only pending orders; summary covers all orders',
     pending.status === 200 && pending.body.orders.every((o) => o.fulfillment_status === 'PAID_PENDING_PICKUP') &&
@@ -257,7 +257,7 @@ async function run() {
       s.total_orders === 5 && s.pending_pickup === 3 && s.picked_up === 2,
     `summary=${JSON.stringify(s)}`);
 
-  const search = await api('GET', '/api/merch/orders?q=rohan', { token: tokens.aaryan });
+  const search = await api('GET', '/api/merch/orders?q=rohan', { token: tokens.vikram });
   check('staff ?q=rohan -> Rohan\'s orders only (seeded + new)',
     search.body.count === 2 && search.body.orders.every((o) => o.buyer.name === 'Rohan Verma'));
 

@@ -40,8 +40,8 @@ async function run() {
   const login = async (email) =>
     (await api('POST', '/api/auth/login', { body: { email, password: 'skyline123' } })).body.token;
   const tokens = {
-    aaryan: await login('aaryan@skyline.edu'),
-    priya: await login('priya@skyline.edu'),
+    vikram: await login('vikram@skyline.edu'),
+    neha: await login('neha@skyline.edu'),
     rohan: await login('rohan@skyline.edu'),
     kabir: await login('kabir@skyline.edu'),
   };
@@ -130,7 +130,7 @@ async function run() {
   };
   const studentCreate = await api('POST', '/api/events', { token: tokens.kabir, body: eventBody });
   const invalidCreate = await api('POST', '/api/events', {
-    token: tokens.aaryan,
+    token: tokens.vikram,
     body: { ...eventBody, title: '', total_seats: 0, member_price: -5, event_date: 'next friday' },
   });
   check('POST /api/events as STUDENT -> 403; invalid input -> 400 before touching the DB',
@@ -138,7 +138,7 @@ async function run() {
       ['title', 'total_seats', 'member_price', 'event_date'].every((f) => f in invalidCreate.body.details),
     `details=${JSON.stringify(invalidCreate.body?.details)}`);
 
-  const created = await api('POST', '/api/events', { token: tokens.aaryan, body: eventBody });
+  const created = await api('POST', '/api/events', { token: tokens.vikram, body: eventBody });
   const raceEvent = created.body?.event;
   check('ADMIN creates 1-seat event -> 201, seats_left = 1',
     created.status === 201 && raceEvent.total_seats === 1 && raceEvent.seats_left === 1, `event id=${raceEvent?.id}`);
@@ -181,15 +181,15 @@ async function run() {
   await Promise.all(replicas.map((s) => stopServer(s.child)));
 
   // ---------------------------------------------------------------- Door
-  section('6) Door check-in — Volunteer Priya');
+  section('6) Door check-in — Volunteer Neha');
   const rohanCode = rohanBuy.body.ticket.ticket_code;
-  const checkIn = await api('POST', `/api/tickets/${rohanCode}/check-in`, { token: tokens.priya });
-  check(`Priya checks in ${rohanCode} -> 200 with attendee + attendance count`,
+  const checkIn = await api('POST', `/api/tickets/${rohanCode}/check-in`, { token: tokens.neha });
+  check(`Neha checks in ${rohanCode} -> 200 with attendee + attendance count`,
     checkIn.status === 200 && checkIn.body.attendee.name === 'Rohan Verma' &&
       checkIn.body.attendee.membership.status === 'ACTIVE' && checkIn.body.event.checked_in_count === 1,
     `message="${checkIn.body?.message}" attendance=${checkIn.body?.event?.checked_in_count}/${checkIn.body?.event?.tickets_sold}`);
 
-  const again = await api('POST', `/api/tickets/${rohanCode}/check-in`, { token: tokens.priya });
+  const again = await api('POST', `/api/tickets/${rohanCode}/check-in`, { token: tokens.neha });
   check('second check-in on the same code -> 409 "already checked in at <timestamp>"',
     again.status === 409 && again.body.error === `Ticket already checked in at ${checkIn.body.ticket.checked_in_at}`,
     `body=${JSON.stringify(again.body)}`);
@@ -197,11 +197,11 @@ async function run() {
   const kabirCheckIn = await api('POST', `/api/tickets/${rohanCode}/check-in`, { token: tokens.kabir });
   check('Student Kabir calling /check-in -> 403 Forbidden', kabirCheckIn.status === 403, `body=${JSON.stringify(kabirCheckIn.body)}`);
 
-  const unknownCode = await api('POST', '/api/tickets/TKT-E1-ZZZZZZ/check-in', { token: tokens.priya });
+  const unknownCode = await api('POST', '/api/tickets/TKT-E1-ZZZZZZ/check-in', { token: tokens.neha });
   check('unknown ticket code -> 404', unknownCode.status === 404);
 
   section('Door roster and member lookup');
-  const roster = await api('GET', `/api/events/${gala.id}/tickets?q=rohan`, { token: tokens.priya });
+  const roster = await api('GET', `/api/events/${gala.id}/tickets?q=rohan`, { token: tokens.neha });
   check('staff roster ?q=rohan -> 1 match, checked in; stats cover the whole event',
     roster.status === 200 && roster.body.count === 1 && roster.body.tickets[0].checked_in === true &&
       roster.body.stats.tickets_sold === 4 && roster.body.stats.checked_in_count === 1 &&
@@ -213,18 +213,18 @@ async function run() {
     ownTickets.status === 200 && ownTickets.body.tickets.length === 1 &&
       ownTickets.body.tickets[0].attendee.name === 'Kabir Singh' && !('stats' in ownTickets.body));
 
-  const exact = await api('GET', '/api/memberships/lookup?q=sky-2026-003', { token: tokens.priya });
+  const exact = await api('GET', '/api/memberships/lookup?q=sky-2026-003', { token: tokens.neha });
   const hit = exact.body?.results?.[0];
   check('lookup by membership code (any case) -> Rohan first, ACTIVE, 2 tickets',
     exact.status === 200 && hit.name === 'Rohan Verma' && hit.membership.is_active && hit.tickets_purchased === 2,
     `first=${JSON.stringify(hit)}`);
 
-  const prefix = await api('GET', '/api/memberships/lookup?q=SKY-2026-00', { token: tokens.priya });
-  const byName = await api('GET', '/api/memberships/lookup?q=kab', { token: tokens.aaryan });
+  const prefix = await api('GET', '/api/memberships/lookup?q=SKY-2026-00', { token: tokens.neha });
+  const byName = await api('GET', '/api/memberships/lookup?q=kab', { token: tokens.vikram });
   check('lookup by code prefix -> all 4 members; by partial name -> Kabir (now a member)',
     prefix.body.count === 4 && byName.body.count === 1 && byName.body.results[0].membership.code === 'SKY-2026-004');
 
-  const all = await api('GET', '/api/memberships/lookup', { token: tokens.priya });
+  const all = await api('GET', '/api/memberships/lookup', { token: tokens.neha });
   const createdDesc = all.body.results.every((r, i, a) => i === 0 || a[i - 1].created_at >= r.created_at);
   check('lookup with empty q -> members only, newest first',
     all.status === 200 && all.body.count === 4 && all.body.results.every((r) => r.membership.code) && createdDesc,
