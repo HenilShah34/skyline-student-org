@@ -6,7 +6,7 @@ const { HttpError, validationFailed, parsePositiveInt, parseInteger, parseEnumPa
 const { DEFAULT_CAMPAIGN, TASK_STATUSES, localDate, campaignSummaries } = require('../lib/fundraising');
 const { requireAuth, requireRole } = require('../middleware/requireAuth');
 
-const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
+const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const MAX_CAMPAIGN = 80;
 const MAX_TITLE = 150;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -100,7 +100,7 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 // People a task can be assigned to, for the "Add Task" picker. Staff only.
-router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const users = db
     .prepare(`
       SELECT id, name, role FROM users
@@ -109,7 +109,7 @@ router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, r
   res.json({ users });
 });
 
-router.post('/', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.post('/', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const body = req.body || {};
   const campaign = body.campaign_name === undefined
     ? DEFAULT_CAMPAIGN

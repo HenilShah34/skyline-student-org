@@ -68,7 +68,7 @@ async function run() {
 
   const { api } = servers[0];
   const login = async (email) => (await api('POST', '/api/auth/login', { body: { email, password: 'skyline123' } })).body.token;
-  const admin = await login('vikram@skyline.edu');
+  const treasurer = await login('meera@skyline.edu');
   const volunteer = await login('neha@skyline.edu');
   const buyers = [];
   for (let i = 1; i <= PROCESSES; i++) {
@@ -105,14 +105,14 @@ async function run() {
   verdict(stock === 0 && orders1 - orders0 === 1, `stock_count = ${stock} (never negative), ${orders1 - orders0} order row added`);
 
   // Race 3 ---------------------------------------------------------------
-  console.log(bold('\nRace 3 · Scene 6 · five admin approvals of one ₹650 receipt'));
+  console.log(bold('\nRace 3 · Scene 6 · five treasurer approvals of one ₹650 receipt'));
   const claim = await api('POST', '/api/finance/reimbursements', {
     token: volunteer,
     body: { title: 'Bake Sale Cocoa & Sugar', category: 'FUNDRAISER_SUPPLIES', amount: 650, receipt_reference: 'RCP-PROOF-650' },
   });
   const claimId = claim.body.reimbursement.id;
   const out0 = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM ledger_transactions WHERE type = 'OUT'").get();
-  const r3 = await race((server) => server.api('PATCH', `/api/finance/reimbursements/${claimId}/review`, { token: admin, body: { decision: 'APPROVED_PAID' } }));
+  const r3 = await race((server) => server.api('PATCH', `/api/finance/reimbursements/${claimId}/review`, { token: treasurer, body: { decision: 'APPROVED_PAID' } }));
   const out1 = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM ledger_transactions WHERE type = 'OUT'").get();
   verdict(r3.filter((r) => r.status === 200).length === 1 && r3.filter((r) => r.status === 409).length === 4,
     `exactly 1 × 200 OK, 4 × 409 "Reimbursement already APPROVED_PAID"`);

@@ -114,7 +114,7 @@ async function run() {
   const { api } = primary;
 
   const users = {};
-  for (const name of ['vikram', 'neha', 'rohan', 'kabir']) {
+  for (const name of ['vikram', 'meera', 'neha', 'rohan', 'kabir']) {
     const res = await api('POST', '/api/auth/login', { body: { email: `${name}@skyline.edu`, password: 'skyline123' } });
     users[name] = { token: res.body.token, id: res.body.user.id };
   }
@@ -278,12 +278,12 @@ async function run() {
   check('staff list: one query returns volunteer + approver names (approver NULL while PENDING); totals by status',
     queue.status === 200 && queue.body.reimbursements[0].status === 'PENDING' &&
       queue.body.reimbursements.some((r) => r.id === claim.id && r.approved_by_name === null) &&
-      approvedSeed?.approved_by_name === 'Vikram Desai' &&
+      approvedSeed?.approved_by_name === 'Meera Joshi' &&
       queue.body.summary.pending_amount === 1640 + 650 && queue.body.summary.approved_paid_amount === 2350 &&
       queue.body.summary.rejected_amount === 0,
     `summary=${JSON.stringify(queue.body?.summary)}`);
 
-  const pendingOnly = await api('GET', '/api/finance/reimbursements?status=pending', { token: tok('vikram') });
+  const pendingOnly = await api('GET', '/api/finance/reimbursements?status=pending', { token: tok('meera') });
   const studentList = await api('GET', '/api/finance/reimbursements', { token: tok('kabir') });
   check('?status=PENDING filters; a student sees only their own (none) and no totals',
     pendingOnly.body.count === 2 && pendingOnly.body.reimbursements.every((r) => r.status === 'PENDING') &&
@@ -305,7 +305,7 @@ async function run() {
   const attempts = await Promise.all(
     pool.map((server) =>
       timed(() => server.api('PATCH', `/api/finance/reimbursements/${claim.id}/review`, {
-        token: tok('vikram'),
+        token: tok('meera'),
         body: { decision: 'APPROVED_PAID' },
       }))),
   );
@@ -320,21 +320,21 @@ async function run() {
       db.prepare("SELECT COUNT(*) AS n FROM ledger_transactions WHERE reference_id = 'RCP-2026-884'").get().n === 1,
     `EXPENSE_REIMBURSEMENT OUT rows ${out0.n} -> ${out1.n}; "${won[0]?.body?.transaction?.description}"`);
   const paidRow = db.prepare('SELECT status, approved_by FROM expense_reimbursements WHERE id = ?').get(claim.id);
-  check('claim is APPROVED_PAID with Vikram recorded as approver',
-    paidRow.status === 'APPROVED_PAID' && paidRow.approved_by === users.vikram.id &&
-      won[0]?.body?.reimbursement?.approved_by_name === 'Vikram Desai');
+  check('claim is APPROVED_PAID with Treasurer Meera recorded as approver',
+    paidRow.status === 'APPROVED_PAID' && paidRow.approved_by === users.meera.id &&
+      won[0]?.body?.reimbursement?.approved_by_name === 'Meera Joshi');
 
   await Promise.all(replicas.map((s) => stopServer(s.child)));
 
   const seededPending = pendingOnly.body.reimbursements.find((r) => r.id !== claim.id);
   const beforeReject = ledgerTotals();
   const reject = await api('PATCH', `/api/finance/reimbursements/${seededPending.id}/review`, {
-    token: tok('vikram'),
+    token: tok('meera'),
     body: { decision: 'rejected' },
   });
   const afterReject = ledgerTotals();
   const reReview = await api('PATCH', `/api/finance/reimbursements/${seededPending.id}/review`, {
-    token: tok('vikram'),
+    token: tok('meera'),
     body: { decision: 'APPROVED_PAID' },
   });
   check('rejecting a claim -> 200 REJECTED, no ledger row; reviewing it again -> 409',
@@ -350,33 +350,50 @@ async function run() {
     body: { decision: 'APPROVED_PAID' },
   });
   const badDecision = await api('PATCH', `/api/finance/reimbursements/${ownClaim.body.reimbursement.id}/review`, {
-    token: tok('vikram'),
+    token: tok('meera'),
     body: { decision: 'MAYBE' },
   });
-  const ghostClaim = await api('PATCH', '/api/finance/reimbursements/99999/review', { token: tok('vikram'), body: { decision: 'REJECTED' } });
+  const ghostClaim = await api('PATCH', '/api/finance/reimbursements/99999/review', { token: tok('meera'), body: { decision: 'REJECTED' } });
   check('admin approving their own claim -> 403; bad decision -> 400; unknown claim -> 404',
     ownClaim.status === 201 && ownApprove.status === 403 && badDecision.status === 400 && ghostClaim.status === 404);
 
+  const treasurerClaim = await api('POST', '/api/finance/reimbursements', {
+    token: tok('meera'),
+    body: { title: 'Ledger notebook', category: 'OPERATIONS', amount: 120, receipt_reference: 'BK-12' },
+  });
+  const treasurerSelf = await api('PATCH', `/api/finance/reimbursements/${treasurerClaim.body.reimbursement.id}/review`, {
+    token: tok('meera'),
+    body: { decision: 'APPROVED_PAID' },
+  });
+  const adminApprovesTreasurer = await api('PATCH', `/api/finance/reimbursements/${treasurerClaim.body.reimbursement.id}/review`, {
+    token: tok('vikram'),
+    body: { decision: 'APPROVED_PAID' },
+  });
+  check("treasurer approving their own claim -> 403; the admin may approve the treasurer's claim -> 200",
+    treasurerClaim.status === 201 && treasurerSelf.status === 403 &&
+      adminApprovesTreasurer.status === 200 && adminApprovesTreasurer.body.transaction.amount === 120,
+    `${treasurerSelf.status}/${adminApprovesTreasurer.status}`);
+
   // ------------------------------------------------------------ Ledger
   section('4) Treasurer ledger');
-  const book0 = (await api('GET', '/api/finance/ledger', { token: tok('vikram') })).body.summary;
+  const book0 = (await api('GET', '/api/finance/ledger', { token: tok('meera') })).body.summary;
   const income = await api('POST', '/api/finance/fundraiser-income', {
-    token: tok('vikram'),
+    token: tok('meera'),
     body: { amount: 4250, description: 'Spring Bake Sale — Saturday stall takings (cash + UPI)', reference_id: 'BAKESALE-DAY1' },
   });
   check('Treasurer records ₹4250 bake sale income -> 201, net balance +₹4250',
     income.status === 201 && income.body.transaction.category === 'FUNDRAISER_INCOME' && income.body.transaction.type === 'IN' &&
       income.body.summary.net_balance - book0.net_balance === 4250);
   const incomeAgain = await api('POST', '/api/finance/fundraiser-income', {
-    token: tok('vikram'),
+    token: tok('meera'),
     body: { amount: 4250, description: 'dup', reference_id: 'bakesale-day1' },
   });
   const volunteerIncome = await api('POST', '/api/finance/fundraiser-income', { token: tok('neha'), body: { amount: 10, description: 'x' } });
-  const badIncome = await api('POST', '/api/finance/fundraiser-income', { token: tok('vikram'), body: { amount: -5, description: '' } });
+  const badIncome = await api('POST', '/api/finance/fundraiser-income', { token: tok('meera'), body: { amount: -5, description: '' } });
   check('same reference recorded twice -> 409; volunteer -> 403; invalid -> 400',
     incomeAgain.status === 409 && volunteerIncome.status === 403 && badIncome.status === 400);
 
-  const ledgerRes = await api('GET', '/api/finance/ledger', { token: tok('vikram') });
+  const ledgerRes = await api('GET', '/api/finance/ledger', { token: tok('meera') });
   const { summary, by_category: byCategory, transactions } = ledgerRes.body;
   const raw = ledgerTotals();
   check('summary: total_in - total_out === net_balance, and matches raw SQL totals',

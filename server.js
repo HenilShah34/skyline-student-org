@@ -99,6 +99,107 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: toPublicUser(user) });
 });
 
+// ---------------------------------------------------------------- account recovery + profile
+
+const MIN_RESET_PASSWORD = 6;
+const MAX_PASSWORD = 128;
+
+function maskEmail(email) {
+  const [local, domain] = email.split('@');
+  return `${local.slice(0, 2)}${'•'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+}
+
+// "Forgot email": find an account by its membership code (e.g. SKY-2026-004)
+// or its full name, both case-insensitive. A code match wins over a name match.
+app.post('/api/auth/forgot-email', (req, res) => {
+  const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+  if (!query || query.length > 100) return validationError(res, { query: 'Enter your full name or membership code (SKY-2026-XXX)' });
+
+  const user = db
+    .prepare(`
+      SELECT * FROM users
+      WHERE UPPER(membership_code) = UPPER(?) OR LOWER(name) = LOWER(?)
+      ORDER BY CASE WHEN UPPER(membership_code) = UPPER(?) THEN 0 ELSE 1 END, id
+      LIMIT 1`)
+    .get(query, query, query);
+  if (!user) return res.status(404).json({ error: 'No account matches that name or membership code' });
+
+  res.json({
+    account: {
+      name: user.name,
+      email: user.email,
+      masked_email: maskEmail(user.email),
+      role: user.role,
+      membership_code: user.membership_code,
+    },
+  });
+});
+
+// "Forgot password": prove who you are with your membership code or full name,
+// then set a new password. Unknown email and wrong verification give the same
+// 401, so the endpoint can't be used to discover which emails are registered.
+app.post('/api/auth/forgot-password', (req, res) => {
+  const { email, verification, new_password: newPassword } = req.body || {};
+  const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const proof = typeof verification === 'string' ? verification.trim() : '';
+
+  const details = {};
+  if (!EMAIL_RE.test(cleanEmail)) details.email = 'A valid email address is required';
+  if (!proof) details.verification = 'Enter your membership code (SKY-2026-XXX) or your full name';
+  if (typeof newPassword !== 'string' || newPassword.length < MIN_RESET_PASSWORD || newPassword.length > MAX_PASSWORD) {
+    details.new_password = `New password must be ${MIN_RESET_PASSWORD}-${MAX_PASSWORD} characters`;
+  }
+  if (Object.keys(details).length) return validationError(res, details);
+
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+  const verified = user && (
+    (user.membership_code && user.membership_code.toUpperCase() === proof.toUpperCase()) ||
+    user.name.toLowerCase() === proof.toLowerCase()
+  );
+  if (!verified) return res.status(401).json({ error: 'Those details do not match any account' });
+
+  const passwordHash = hashPassword(newPassword); // slow KDF, kept outside the write lock
+  const updated = withTransaction(() => {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  });
+  res.json({ token: issueToken(updated), user: toPublicUser(updated) });
+});
+
+// Update your own name and/or password. Changing the password needs the
+// current one, so a borrowed, unlocked session can't lock the owner out.
+app.patch('/api/auth/profile', requireAuth, (req, res) => {
+  const body = req.body || {};
+  const changeName = body.name !== undefined;
+  const changePassword = body.new_password !== undefined;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+
+  const details = {};
+  if (!changeName && !changePassword) details.profile = 'Send a new name and/or a new password';
+  if (changeName && (name.length < 2 || name.length > 80)) details.name = 'Name must be 2-80 characters';
+  if (changePassword) {
+    if (typeof body.current_password !== 'string' || !body.current_password) details.current_password = 'Current password is required';
+    if (typeof body.new_password !== 'string' || body.new_password.length < MIN_RESET_PASSWORD || body.new_password.length > MAX_PASSWORD) {
+      details.new_password = `New password must be ${MIN_RESET_PASSWORD}-${MAX_PASSWORD} characters`;
+    }
+  }
+  if (Object.keys(details).length) return validationError(res, details);
+
+  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!current) return res.status(401).json({ error: 'Unauthorized', reason: 'user no longer exists' });
+  if (changePassword && !verifyPassword(body.current_password, current.password_hash)) {
+    return res.status(403).json({ error: 'Current password is incorrect' });
+  }
+
+  const passwordHash = changePassword ? hashPassword(body.new_password) : null;
+  const user = withTransaction(() => {
+    if (changeName) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, current.id);
+    if (passwordHash) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, current.id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(current.id);
+  });
+  res.json({ user: toPublicUser(user), updated: { name: changeName, password: changePassword } });
+});
+
 // Powers the 1-click demo login buttons. Set DEMO_ACCOUNTS=off to hide it.
 app.get('/api/auth/demo-accounts', (req, res) => {
   if (process.env.DEMO_ACCOUNTS === 'off') return res.status(404).json({ error: 'Not found' });
@@ -128,7 +229,7 @@ const PROOF_QUERIES = [
 
 // Live architecture proof for demos: pragmas, row counts, query plans and the
 // ledger balance check, all read from the running database.
-app.get('/api/system/proof', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+app.get('/api/system/proof', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const tableCounts = {};
   for (const table of TABLES) tableCounts[table] = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
 

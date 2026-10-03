@@ -4,19 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Skyline Student Association ERP: memberships, events, announcements, merch, fundraising and finance.">
+  <meta name="color-scheme" content="light dark">
   <title>Skyline ERP · Student Association</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23714B67'/%3E%3Cpath d='M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z' fill='%23fff'/%3E%3C/svg%3E">
+  <script>
+    // Apply the saved theme before the first paint, so dark mode never flashes white.
+    try {
+      var theme = localStorage.getItem('skyline.theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+    } catch (e) {
+      document.documentElement.dataset.theme = 'light';
+    }
+  </script>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="logged-out">
   <header class="topbar">
+    <button type="button" class="icon-btn menu-btn" data-action="toggleNav" aria-label="Toggle navigation menu" aria-controls="nav">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
     <a class="brand" href="#overview" aria-label="Skyline ERP home">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 32 32"><path d="M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z" fill="currentColor"/></svg>
       </span>
       <span class="brand-text"><strong>Skyline</strong><span>Student Association ERP</span></span>
     </a>
-    <div class="personas" id="personas" aria-label="Demo personas"></div>
     <div class="session" id="session"></div>
   </header>
 
@@ -26,8 +39,8 @@
       <div class="loading-page"><span class="spinner"></span> Loading Skyline ERP…</div>
     </main>
   </div>
+  <div class="nav-backdrop" data-action="closeNav" aria-hidden="true"></div>
 
-  <section class="inspector" id="inspector" aria-label="Live API inspector"></section>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div id="modal-root"></div>
 

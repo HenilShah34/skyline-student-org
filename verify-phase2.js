@@ -58,14 +58,14 @@ async function run() {
   const after = renew.body?.user?.membership;
   const dues1 = ledger('MEMBERSHIP_DUES');
   check('POST /api/memberships/join-or-renew -> 200 RENEWED, renewal_due flips to false',
-    renew.status === 200 && renew.body.action === 'RENEWED' && after.renewal_due === false && after.code === 'SKY-2026-003',
+    renew.status === 200 && renew.body.action === 'RENEWED' && after.renewal_due === false && after.code === 'SKY-2026-004',
     `status=${renew.status} membership=${JSON.stringify(after)}`);
   check('expiry extended exactly 365 days from the current expiry (not from today)',
     Date.parse(after.expires_at) - Date.parse(before.expires_at) === 365 * DAY_MS && renew.body.extended_from === 'CURRENT_EXPIRY',
     `${before.expires_at} -> ${after.expires_at}`);
-  check('ledger +₹500 MEMBERSHIP_DUES, referenced to SKY-2026-003',
+  check('ledger +₹500 MEMBERSHIP_DUES, referenced to SKY-2026-004',
     dues1.n - dues0.n === 1 && dues1.total - dues0.total === 500 &&
-      renew.body.transaction.amount === 500 && renew.body.transaction.reference_id === 'SKY-2026-003',
+      renew.body.transaction.amount === 500 && renew.body.transaction.reference_id === 'SKY-2026-004',
     `dues total ₹${dues0.total} -> ₹${dues1.total}; "${renew.body.transaction?.description}"`);
 
   // ---------------------------------------------------------------- Scene 2
@@ -112,8 +112,8 @@ async function run() {
   const join = await api('POST', '/api/memberships/join-or-renew', { token: tokens.kabir });
   const joined = join.body?.user?.membership;
   const daysOut = (Date.parse(joined?.expires_at) - Date.now()) / DAY_MS;
-  check('Kabir joins -> 200 JOINED, new code SKY-2026-004, ACTIVE for 365 days from today',
-    join.status === 200 && join.body.action === 'JOINED' && joined.code === 'SKY-2026-004' &&
+  check('Kabir joins -> 200 JOINED, new code SKY-2026-005, ACTIVE for 365 days from today',
+    join.status === 200 && join.body.action === 'JOINED' && joined.code === 'SKY-2026-005' &&
       joined.status === 'ACTIVE' && join.body.extended_from === 'TODAY' && Math.abs(daysOut - 365) < 0.001,
     `membership=${JSON.stringify(joined)}`);
   check('ledger +₹500 MEMBERSHIP_DUES for Kabir', ledger('MEMBERSHIP_DUES').total - dues1.total === 500);
@@ -213,7 +213,7 @@ async function run() {
     ownTickets.status === 200 && ownTickets.body.tickets.length === 1 &&
       ownTickets.body.tickets[0].attendee.name === 'Kabir Singh' && !('stats' in ownTickets.body));
 
-  const exact = await api('GET', '/api/memberships/lookup?q=sky-2026-003', { token: tokens.neha });
+  const exact = await api('GET', '/api/memberships/lookup?q=sky-2026-004', { token: tokens.neha });
   const hit = exact.body?.results?.[0];
   check('lookup by membership code (any case) -> Rohan first, ACTIVE, 2 tickets',
     exact.status === 200 && hit.name === 'Rohan Verma' && hit.membership.is_active && hit.tickets_purchased === 2,
@@ -221,13 +221,13 @@ async function run() {
 
   const prefix = await api('GET', '/api/memberships/lookup?q=SKY-2026-00', { token: tokens.neha });
   const byName = await api('GET', '/api/memberships/lookup?q=kab', { token: tokens.vikram });
-  check('lookup by code prefix -> all 4 members; by partial name -> Kabir (now a member)',
-    prefix.body.count === 4 && byName.body.count === 1 && byName.body.results[0].membership.code === 'SKY-2026-004');
+  check('lookup by code prefix -> all 5 members; by partial name -> Kabir (now a member)',
+    prefix.body.count === 5 && byName.body.count === 1 && byName.body.results[0].membership.code === 'SKY-2026-005');
 
   const all = await api('GET', '/api/memberships/lookup', { token: tokens.neha });
   const createdDesc = all.body.results.every((r, i, a) => i === 0 || a[i - 1].created_at >= r.created_at);
   check('lookup with empty q -> members only, newest first',
-    all.status === 200 && all.body.count === 4 && all.body.results.every((r) => r.membership.code) && createdDesc,
+    all.status === 200 && all.body.count === 5 && all.body.results.every((r) => r.membership.code) && createdDesc,
     all.body.results.map((r) => r.membership.code).join(', '));
 
   const studentLookup = await api('GET', '/api/memberships/lookup?q=rohan', { token: tokens.kabir });
@@ -246,7 +246,7 @@ async function run() {
     ['duplicate-ticket check by (event_id, user_id)', /SEARCH tickets USING (COVERING )?INDEX idx_tickets_event_user/,
       'SELECT ticket_code FROM tickets WHERE event_id = ? AND user_id = ?', [1, 1]],
     ['member lookup by exact code', /SEARCH users USING (COVERING )?INDEX sqlite_autoindex_users_2/,
-      'SELECT id FROM users WHERE membership_code = ?', ['SKY-2026-003']],
+      'SELECT id FROM users WHERE membership_code = ?', ['SKY-2026-004']],
   ];
   for (const [label, expected, sql, params] of plans) {
     const detail = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params).map((r) => r.detail).join(' | ');

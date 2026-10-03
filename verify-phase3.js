@@ -83,18 +83,18 @@ async function run() {
     },
   });
   const secret = membersPost.body?.announcement;
-  check('Neha posts MEMBERS_ONLY -> 201 with author details, recipients_notified = 3 active members',
+  check('Neha posts MEMBERS_ONLY -> 201 with author details, recipients_notified = 4 active members',
     membersPost.status === 201 && secret.author_name === 'Neha Sharma' && secret.author_role === 'VOLUNTEER' &&
-      secret.target_audience === 'MEMBERS_ONLY' && membersPost.body.recipients_notified === 3,
+      secret.target_audience === 'MEMBERS_ONLY' && membersPost.body.recipients_notified === 4,
     `id=${secret?.id} recipients_notified=${membersPost.body?.recipients_notified}`);
 
   const publicPost = await api('POST', '/api/announcements', {
     token: tokens.vikram,
     body: { title: 'Bake sale volunteers needed', content: 'Sign up at the club desk for a Saturday shift.', category: 'general' },
   });
-  check('ADMIN posts with default audience -> ALL, recipients_notified = every account (4)',
+  check('ADMIN posts with default audience -> ALL, recipients_notified = every account (5)',
     publicPost.status === 201 && publicPost.body.announcement.target_audience === 'ALL' &&
-      publicPost.body.announcement.category === 'GENERAL' && publicPost.body.recipients_notified === 4);
+      publicPost.body.announcement.category === 'GENERAL' && publicPost.body.recipients_notified === 5);
 
   const kabirFeed = await api('GET', '/api/announcements', { token: tokens.kabir });
   check('Kabir (NONE) does not see the MEMBERS_ONLY post; hidden_members_only_count >= 1',

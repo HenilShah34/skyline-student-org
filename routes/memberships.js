@@ -82,7 +82,7 @@ router.post('/memberships/join-or-renew', requireAuth, (req, res) => {
 });
 
 // Door verification: is the person in front of me an active member?
-router.get('/memberships/lookup', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.get('/memberships/lookup', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const q = parseSearchQuery(req.query.q);
 
   // Ticket counts come from one grouped pass over tickets, not a query per user.

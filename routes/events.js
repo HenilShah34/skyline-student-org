@@ -10,7 +10,7 @@ const { membershipSnapshot } = require('../lib/users');
 const { loadViewer } = require('../lib/viewer');
 const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
 
-const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
+const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const MAX_SEATS = 100000;
 const MAX_PRICE = 1000000;
 const TICKET_CODE_RE = /^[A-Z0-9-]{4,40}$/;
@@ -287,7 +287,7 @@ router.get('/events/:id/tickets', requireAuth, (req, res) => {
   });
 });
 
-router.post('/tickets/:code/check-in', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.post('/tickets/:code/check-in', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const code = req.params.code.trim().toUpperCase();
   if (!TICKET_CODE_RE.test(code)) throw validationFailed({ code: 'Ticket code must be 4-40 letters, digits or dashes' });
 

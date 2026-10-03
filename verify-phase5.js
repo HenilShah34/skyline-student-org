@@ -53,7 +53,8 @@ async function run(server) {
   const wired = ['Authorization', '/api/memberships/join-or-renew', '/api/memberships/lookup', '/tickets',
     '/check-in', '/api/announcements', '/api/merch/orders', '/pickup', '/api/tasks', '/status',
     '/api/finance/reimbursements', '/review', '/api/finance/ledger', '/api/finance/fundraiser-income',
-    '/api/auth/demo-accounts', '/api/events'];
+    '/api/auth/demo-accounts', '/api/events', '/api/auth/forgot-password', '/api/auth/forgot-email',
+    '/api/auth/profile', '/api/system/proof', '/api/finance/ledger/export.csv'];
   const missing = wired.filter((needle) => !js.body.includes(needle));
   check('app.js is wired to every scene endpoint and sends the Bearer token', missing.length === 0, missing.join(', '));
 
@@ -100,7 +101,7 @@ async function run(server) {
   const assignees = await api('GET', '/api/tasks/assignees', { token: neha });
   const studentAssignees = await api('GET', '/api/tasks/assignees', { token: kabir });
   check('GET /api/tasks/assignees: staff get the picker list; students -> 403',
-    assignees.status === 200 && assignees.body.users.length === 4 && assignees.body.users.every((u) => u.id && u.name && u.role) &&
+    assignees.status === 200 && assignees.body.users.length === 5 && assignees.body.users.every((u) => u.id && u.name && u.role) &&
       !('password_hash' in assignees.body.users[0]) && studentAssignees.status === 403);
 
   const forged = await api('GET', '/api/events', { token: `${kabir.slice(0, -1)}x` });

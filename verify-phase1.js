@@ -26,7 +26,7 @@ async function verifyApi(api) {
   const health = await api('GET', '/api/health');
   check('GET /api/health -> 200, foreign_keys = 1, WAL, auto-seeded',
     health.status === 200 && health.body.database.foreign_keys === 1 &&
-      health.body.database.journal_mode === 'wal' && health.body.tables.users === 4,
+      health.body.database.journal_mode === 'wal' && health.body.tables.users === 5,
     `driver=${health.body?.database?.driver} rows=${JSON.stringify(health.body?.tables)}`);
 
   const login = await api('POST', '/api/auth/login', { body: { email: 'vikram@skyline.edu', password: 'skyline123' } });
@@ -71,13 +71,13 @@ async function verifyApi(api) {
   check('GET /api/auth/me (signature tampered) -> 401 signature mismatch',
     badSig.status === 401 && badSig.body.reason === 'signature mismatch');
 
-  const reg = await api('POST', '/api/auth/register', { body: { name: 'Meera Joshi', email: 'Meera@Skyline.edu', password: 'hackathon26' } });
+  const reg = await api('POST', '/api/auth/register', { body: { name: 'Ananya Patel', email: 'Ananya@Skyline.edu', password: 'hackathon26' } });
   check('POST /api/auth/register -> 201 STUDENT, membership NONE',
     reg.status === 201 && reg.body.user.role === 'STUDENT' && reg.body.user.membership.status === 'NONE' &&
-      reg.body.user.email === 'meera@skyline.edu' && typeof reg.body.token === 'string',
+      reg.body.user.email === 'ananya@skyline.edu' && typeof reg.body.token === 'string',
     `status=${reg.status} user=${JSON.stringify(reg.body?.user)}`);
 
-  const dup = await api('POST', '/api/auth/register', { body: { name: 'Meera Again', email: 'meera@SKYLINE.edu', password: 'hackathon26' } });
+  const dup = await api('POST', '/api/auth/register', { body: { name: 'Ananya Again', email: 'ananya@SKYLINE.edu', password: 'hackathon26' } });
   check('POST /api/auth/register (duplicate email, any case) -> 409', dup.status === 409);
 
   const badReg = await api('POST', '/api/auth/register', { body: { name: 'X', email: 'not-an-email', password: 'short' } });
@@ -86,8 +86,9 @@ async function verifyApi(api) {
     `details=${JSON.stringify(badReg.body?.details)}`);
 
   const demo = await api('GET', '/api/auth/demo-accounts');
-  check('GET /api/auth/demo-accounts -> 4 seeded accounts',
-    demo.status === 200 && demo.body.accounts.length === 4,
+  check('GET /api/auth/demo-accounts -> 5 seeded accounts across 4 roles',
+    demo.status === 200 && demo.body.accounts.length === 5 &&
+      ['ADMIN', 'TREASURER', 'VOLUNTEER', 'STUDENT'].every((r) => demo.body.accounts.some((a) => a.role === r)),
     demo.body?.accounts?.map((a) => `${a.email} (${a.role})`).join(', '));
 }
 
@@ -193,7 +194,7 @@ async function verifyDatabase() {
 
   section('EXPLAIN QUERY PLAN');
   const plans = [
-    ['users by membership_code', 'SELECT id FROM users WHERE membership_code = ?', ['SKY-2026-003']],
+    ['users by membership_code', 'SELECT id FROM users WHERE membership_code = ?', ['SKY-2026-004']],
     ['tickets by event_id + user_id', 'SELECT id FROM tickets WHERE event_id = ? AND user_id = ?', [1, 1]],
     ['tickets by ticket_code', 'SELECT * FROM tickets WHERE ticket_code = ?', ['TKT-GALA26-0001']],
     ['merch_variants by item_id + size', 'SELECT stock_count FROM merch_variants WHERE item_id = ? AND size = ?', [1, 'M']],

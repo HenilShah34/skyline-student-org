@@ -5,19 +5,20 @@
  *
  * One `state` object drives every view. Mutations never patch state locally:
  * they flip a loading flag, call the API, then re-fetch the affected endpoints
- * and re-render, so the screen always shows what SQLite holds. Every request is
- * recorded in the Live API Inspector at the bottom of the page.
+ * and re-render, so the screen always shows what SQLite holds. Failures are
+ * shown as plain-language toasts, never as raw HTTP status codes.
  */
 
 // ============================================================================ config
 
 const TOKEN_KEY = 'skyline.token';
+const THEME_KEY = 'skyline.theme';
 const MEMBERSHIP_FEE = 500; // label only: the server charges its own fee
 const RENEWAL_WINDOW_DAYS = 30; // label only: the server enforces the window
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CAMPAIGN = 'Spring Bake Sale';
-const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
-const INSPECTOR_LIMIT = 40;
+const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
+const FINANCE_ROLES = new Set(['TREASURER', 'ADMIN']);
 const SEARCH_DELAY_MS = 220;
 
 const SVG_ATTRS = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
@@ -28,6 +29,12 @@ const ICONS = {
   merch: `<svg ${SVG_ATTRS}><path d="M8 3 3 6l2 5 3-1v11h8V10l3 1 2-5-5-3a4 4 0 0 1-8 0z"/></svg>`,
   tasks: `<svg ${SVG_ATTRS}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/><path d="M5.5 8h1.5M11.5 8h1.5M11.5 11h1.5M17.5 8h1.5"/></svg>`,
   finance: `<svg ${SVG_ATTRS}><path d="M4 7a2 2 0 0 1 2-2h12v2"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M16 13.5h2"/></svg>`,
+  profile: `<svg ${SVG_ATTRS}><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
+  menu: `<svg ${SVG_ATTRS}><path d="M4 6h16M4 12h16M4 18h16"/></svg>`,
+  sun: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
+  moon: `<svg ${SVG_ATTRS}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>`,
+  eye: `<svg ${SVG_ATTRS}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  eyeOff: `<svg ${SVG_ATTRS}><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.1 6.1C3.4 7.9 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4-.9"/></svg>`,
 };
 
 const PRODUCT_ART = {
@@ -42,13 +49,11 @@ const TABS = [
   { id: 'merch', label: 'Merch Store', scene: 'Scene 4' },
   { id: 'tasks', label: 'Bake Sale Planner', scene: 'Scene 5' },
   { id: 'finance', label: 'Finance & Books', scene: 'Scene 6' },
+  { id: 'profile', label: 'My Profile & Settings', scene: 'Account' },
 ];
 
-const STATUS_TEXT = {
-  0: 'Network Error', 200: 'OK', 201: 'Created', 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden',
-  404: 'Not Found', 409: 'Conflict', 413: 'Payload Too Large', 500: 'Internal Server Error', 503: 'Service Unavailable',
-};
-const ROLE_LABEL = { ADMIN: 'Admin', VOLUNTEER: 'Volunteer', STUDENT: 'Student' };
+const ROLE_LABEL = { ADMIN: 'Admin', TREASURER: 'Treasurer', VOLUNTEER: 'Volunteer', STUDENT: 'Student' };
+const ROLE_TONE = { ADMIN: 'plum', TREASURER: 'amber', VOLUNTEER: 'teal', STUDENT: 'blue' };
 const MEMBERSHIP_TONE = { ACTIVE: 'green', EXPIRED: 'red', NONE: 'slate' };
 const FULFILLMENT = { PAID_PENDING_PICKUP: ['Awaiting pickup', 'amber'], PICKED_UP: ['Picked up', 'green'] };
 const REIMBURSEMENT = { PENDING: ['Pending', 'amber'], APPROVED_PAID: ['Approved & paid', 'green'], REJECTED: ['Rejected', 'red'] };
@@ -99,7 +104,11 @@ function blankData() {
 function blankForms() {
   return {
     login: { email: '', password: '' },
-    register: { name: '', email: '', password: '' },
+    register: { name: '', email: '', password: '', confirm: '' },
+    forgotPassword: { email: '', verification: '', new_password: '' },
+    forgotEmail: { query: '' },
+    profile: { name: '' },
+    password: { current: '', next: '', confirm: '' },
     checkin: { code: '' },
     event: { title: '', event_date: '', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
     announcement: { title: '', content: '', category: 'GENERAL', target_audience: 'ALL' },
@@ -137,12 +146,17 @@ const state = {
     reimbStatus: '',
     ledgerType: '',
     ledgerCategory: '',
-    authMode: null,
+    authView: 'signin', // signin | register | forgot-password | forgot-email
     authError: null,
+    showPassword: false,
+    quickFillOpen: false,
+    recoveredAccount: null,
+    navCollapsed: false, // desktop: icon-only sidebar
+    navOpen: false, // mobile: slide-out drawer
+    theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
     proofOpen: false,
   },
   forms: blankForms(),
-  inspector: { open: false, entries: [], selectedId: null, seq: 0 },
   toasts: [],
 };
 
@@ -224,6 +238,11 @@ function isAdmin() {
   return state.user?.role === 'ADMIN';
 }
 
+// The Treasurer and the Admin run the books: approvals, income, CSV export.
+function isFinance() {
+  return Boolean(state.user && FINANCE_ROLES.has(state.user.role));
+}
+
 function toNumber(value) {
   return value === '' || value === null || value === undefined ? null : Number(value);
 }
@@ -247,35 +266,10 @@ function renewalOpensAt(membership) {
   return new Date(Date.parse(membership.expires_at) - RENEWAL_WINDOW_DAYS * DAY_MS).toISOString();
 }
 
-function personaInfo(account) {
-  if (account.role === 'ADMIN') {
-    return { label: 'Admin & Treasurer', blurb: 'Full ERP access: approves reimbursements, closes the semester books, creates events.' };
-  }
-  if (account.role === 'VOLUNTEER') {
-    return { label: 'Volunteer Lead', blurb: 'Door check-in, posts announcements, runs the Bake Sale board, submits expense receipts.' };
-  }
-  const m = account.membership;
-  if (m.status === 'ACTIVE' && m.renewal_due) {
-    return {
-      label: 'Active Member — Renewal Due!',
-      blurb: `Member prices on the Gala and hoodies, sees members-only posts, and the membership expires in ${plural(m.days_remaining, 'day')}.`,
-    };
-  }
-  if (m.status === 'ACTIVE') return { label: 'Active Member', blurb: 'Member prices on events and merch, and sees members-only announcements.' };
-  if (m.status === 'EXPIRED') return { label: 'Expired Member', blurb: 'Back to guest prices until the membership is renewed.' };
-  return { label: 'Non-Member Student', blurb: 'Pays guest and regular prices; members-only announcements stay hidden until joining.' };
-}
+// ============================================================================ API
 
-// ============================================================================ API + inspector
-
-function redact(body) {
-  if (!body || typeof body !== 'object') return body;
-  return Object.fromEntries(Object.entries(body).map(([k, v]) => [k, /password/i.test(k) ? '••••••••' : v]));
-}
-
-// raw: true returns a successful response as a Blob (file downloads); the
-// inspector then shows a short summary instead of the file contents.
-async function api(method, path, body, { mutation = false, raw = false } = {}) {
+// raw: true returns a successful response as a Blob (file downloads).
+async function api(method, path, body, { raw = false } = {}) {
   const headers = { Accept: raw ? '*/*' : 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = state.token;
@@ -290,7 +284,7 @@ async function api(method, path, body, { mutation = false, raw = false } = {}) {
     status = res.status;
     if (raw && res.ok) {
       blob = await res.blob();
-      data = { file: true, content_type: res.headers.get('content-type'), bytes: blob.size, disposition: res.headers.get('content-disposition') };
+      data = { file: true, bytes: blob.size };
     } else {
       const text = await res.text();
       try {
@@ -300,47 +294,104 @@ async function api(method, path, body, { mutation = false, raw = false } = {}) {
       }
     }
   } catch {
-    data = { error: 'Network error: is the Skyline server running?' };
+    data = { error: 'Could not reach the Skyline server.' };
   }
 
-  const entry = {
-    id: ++state.inspector.seq,
-    method,
-    path,
-    status,
-    ms: Math.round(performance.now() - started),
-    at: new Date().toISOString(),
-    token,
-    request: body === undefined ? null : redact(body),
-    response: data,
-    mutation,
-  };
-  state.inspector.entries.unshift(entry);
-  state.inspector.entries.length = Math.min(state.inspector.entries.length, INSPECTOR_LIMIT);
-  if (mutation || state.inspector.selectedId === null) state.inspector.selectedId = entry.id;
-  renderInspector();
-
+  const entry = { method, path, ms: Math.round(performance.now() - started) };
   const result = { ok: status >= 200 && status < 300, status, data, blob, entry, sessionExpired: false };
-  if (status === 401 && token && token === state.token && !path.startsWith('/api/auth/login')) {
+  if (status === 401 && token && token === state.token && !path.startsWith('/api/auth/')) {
     result.sessionExpired = true; // reported once here, not again by the caller
     clearSession();
-    toast(result, 'Your session is no longer valid. Please sign in again.');
+    toast(result, { title: 'Session Expired', message: 'Please sign in again to continue.' });
     render();
   }
   return result;
 }
 
+const WHO = { VOLUNTEER: 'volunteers', TREASURER: 'the Treasurer', ADMIN: 'the Admin', STUDENT: 'students' };
+
+// What the user was trying to do, from the request path (for "Only X can …").
+function actionFor({ method, path }) {
+  if (path.includes('/review')) return 'approve or reject expense reimbursements';
+  if (path.includes('/fundraiser-income')) return 'record fundraiser income';
+  if (path.includes('/export.csv')) return 'export the semester books';
+  if (path === '/api/events' && method === 'POST') return 'create events';
+  if (path.includes('/check-in')) return 'check tickets in at the door';
+  if (path.includes('/pickup')) return 'hand over merch orders';
+  if (path.startsWith('/api/announcements')) return 'post announcements';
+  if (path.startsWith('/api/tasks')) return 'manage fundraiser tasks';
+  if (path.startsWith('/api/finance/reimbursements')) return 'submit expense claims';
+  if (path.startsWith('/api/finance/ledger')) return 'view the club ledger';
+  if (path.startsWith('/api/memberships/lookup')) return 'look up members';
+  if (path.startsWith('/api/system')) return 'view database diagnostics';
+  return 'do this';
+}
+
+function joinWords(words) {
+  return words.length > 1 ? `${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}` : words[0];
+}
+
+// Server conflicts (409) as a human title and sentence.
+function friendlyConflict(error, d) {
+  if (/not yet due for renewal/.test(error)) {
+    return { title: 'Already Renewed', message: `Your membership is active until ${fmtDate(d.expires_at)}. Renewal opens on ${fmtDate(d.renewal_opens_at)}.` };
+  }
+  if (/sold out/i.test(error)) return { title: 'Sold Out', message: 'Every seat for this event has been taken.' };
+  if (/already hold a ticket/.test(error)) return { title: 'Already Booked', message: `You already have ticket ${d.ticket_code} for this event.` };
+  if (/already taken place/.test(error)) return { title: 'Event Has Ended', message: 'Tickets can only be bought for upcoming events.' };
+  if (/already checked in/i.test(error)) {
+    return { title: 'Already Checked In', message: `This ticket was used at ${fmtTime(d.checked_in_at)}${d.attendee?.name ? ` by ${d.attendee.name}` : ''}. Do not admit twice.` };
+  }
+  if (/out of stock|left in size/i.test(error)) return { title: 'Not Enough Stock', message: `${error}.` };
+  if (/already picked up/i.test(error)) {
+    return { title: 'Already Picked Up', message: `This order was handed over${d.picked_up_by ? ` by ${d.picked_up_by}` : ''}${d.picked_up_at ? ` on ${fmtDateTime(d.picked_up_at)}` : ''}.` };
+  }
+  const reviewed = /Reimbursement already (\w+)/.exec(error);
+  if (reviewed) {
+    const [label] = REIMBURSEMENT[reviewed[1]] || [reviewed[1]];
+    return { title: 'Already Reviewed', message: `This claim is already ${label.toLowerCase()}${d.approved_by_name ? ` (by ${d.approved_by_name})` : ''}.` };
+  }
+  if (/Receipt .* already submitted/.test(error)) return { title: 'Duplicate Receipt', message: `${error}.` };
+  if (/already recorded/.test(error)) return { title: 'Already Recorded', message: `${error}.` };
+  if (/email already exists/.test(error)) return { title: 'Email Already Registered', message: 'Sign in instead, or use “Forgot password?” to reset it.' };
+  return { title: 'Already Done', message: error || 'Someone else changed this first. The page has been refreshed.' };
+}
+
+// Any failed response as { title, message } in plain language, never a status code.
+function friendlyError(result) {
+  const d = result.data && typeof result.data === 'object' ? result.data : {};
+  const error = d.error || (typeof result.data === 'string' ? result.data : '');
+  const path = result.entry?.path || '';
+  switch (result.status) {
+    case 0: return { title: 'Connection Problem', message: 'Could not reach the Skyline server. Check that it is running.' };
+    case 400: return { title: 'Please Check the Details', message: d.details ? Object.values(d.details).join(' · ') : error || 'Some information is missing or invalid.' };
+    case 401: return path.startsWith('/api/auth/')
+      ? { title: 'Sign-In Failed', message: error && error !== 'Unauthorized' ? error : 'Please check your details and try again.' }
+      : { title: 'Please Sign In', message: 'Your session has ended. Please sign in again.' };
+    case 403: {
+      if (/own reimbursement/.test(d.reason)) return { title: 'Separation of Duties', message: 'You can’t approve your own expense claim — another Treasurer or Admin must review it.' };
+      if (/assigned to them/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Students can only move tasks that are assigned to them.' };
+      if (/reassign/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Only volunteers, the Treasurer or the Admin can reassign tasks.' };
+      const roles = /requires role: (.+)$/.exec(d.reason || '');
+      if (roles) {
+        const who = joinWords(roles[1].split(' or ').map((r) => WHO[r] || r));
+        return { title: 'Action Not Allowed', message: `Only ${who} can ${actionFor(result.entry)}.` };
+      }
+      return { title: 'Action Not Allowed', message: error || 'You don’t have permission to do that.' };
+    }
+    case 404: return { title: 'Not Found', message: error || 'That item no longer exists.' };
+    case 409: return friendlyConflict(error, d);
+    case 413: return { title: 'Too Much Data', message: 'That request was too large to send.' };
+    default: return { title: 'Something Went Wrong', message: error || 'Please try again in a moment.' };
+  }
+}
+
 function errorText(result) {
-  const d = result.data;
-  if (typeof d === 'string') return d || STATUS_TEXT[result.status] || 'Request failed';
-  let message = d?.error || STATUS_TEXT[result.status] || 'Request failed';
-  if (d?.reason) message += ` — ${d.reason}`;
-  if (d?.details) message += `: ${Object.values(d.details).join('; ')}`;
-  return message;
+  return friendlyError(result).message;
 }
 
 function toastIfError(result) {
-  if (!result.ok && !result.sessionExpired) toast(result, errorText(result));
+  if (!result.ok && !result.sessionExpired) toast(result);
 }
 
 // Every write goes through here: one in-flight mutation at a time, a labelled
@@ -352,15 +403,15 @@ async function mutate(key, method, path, body, { success, refresh, onSuccess, on
   state.pendingAction = key;
   render();
 
-  const res = await api(method, path, body, { mutation: true, raw });
+  const res = await api(method, path, body, { raw });
   try {
     if (res.ok) {
       onSuccess?.(res.data, res);
-      toast(res, typeof success === 'function' ? success(res.data) : success || STATUS_TEXT[res.status]);
+      toast(res, typeof success === 'function' ? success(res.data) : success || 'Saved.');
       await (refresh ? refresh() : reloadActiveTab());
     } else {
       onError?.(res);
-      if (!res.sessionExpired) toast(res, errorText(res));
+      if (!res.sessionExpired) toast(res);
       if (res.status === 409) await (refresh ? refresh() : reloadActiveTab());
     }
   } finally {
@@ -373,26 +424,26 @@ async function mutate(key, method, path, body, { success, refresh, onSuccess, on
 
 // ============================================================================ toasts
 
-function toast(result, message) {
-  const id = ++toastSeq;
-  state.toasts.push({
-    id,
-    ok: result.ok,
-    status: result.status,
-    statusText: STATUS_TEXT[result.status] || '',
-    request: result.entry ? `${result.entry.method} ${result.entry.path}` : '',
-    message,
-  });
-  if (state.toasts.length > 4) state.toasts.shift();
-  renderToasts();
-  setTimeout(() => dismissToast(id), result.ok ? 5000 : 8000);
+// content: a message string, or { title, message }. Failures without content
+// are described by friendlyError(). No HTTP status codes are ever shown.
+function toast(result, content) {
+  let note;
+  if (content && typeof content === 'object') note = content;
+  else if (result.ok) note = { title: 'Done', message: content || 'All set.' };
+  else note = content ? { title: friendlyError(result).title, message: content } : friendlyError(result);
+  pushToast({ kind: result.ok ? 'ok' : 'err', ...note }, result.ok ? 5000 : 8000);
 }
 
-function infoToast(message) {
+function infoToast(message, title = 'Done') {
+  pushToast({ kind: 'info', title, message }, 4000);
+}
+
+function pushToast(note, ms) {
   const id = ++toastSeq;
-  state.toasts.push({ id, ok: true, status: null, statusText: 'INFO', request: '', message });
+  state.toasts.push({ id, ...note });
+  if (state.toasts.length > 4) state.toasts.shift();
   renderToasts();
-  setTimeout(() => dismissToast(id), 3500);
+  setTimeout(() => dismissToast(id), ms);
 }
 
 function dismissToast(id) {
@@ -572,6 +623,10 @@ const LOADERS = {
   merch: () => Promise.all([loadMerchItems(), loadOrders()]),
   tasks: () => Promise.all([loadTasks(), state.data.assignees ? null : loadAssignees()]),
   finance: () => Promise.all([loadReimbursements(), loadLedger()]),
+  profile: async () => {
+    await refreshSession();
+    if (state.user) state.forms.profile.name = state.user.name;
+  },
 };
 
 const SEARCHERS = { lookup: loadLookup, desk: loadDesk, announcements: loadAnnouncements, orders: loadOrders };
@@ -608,35 +663,36 @@ function clampQuantity(item) {
 
 // ============================================================================ mutations
 
+// Shared by Sign In, Register and Forgot Password: all three return { token, user }.
+function startSession(d) {
+  setSession(d.token, d.user);
+  state.data = blankData();
+  state.ui.authError = null;
+  state.ui.recoveredAccount = null;
+  state.ui.showPassword = false;
+  state.forms = blankForms();
+  if (state.activeTab === 'profile' || !location.hash) state.activeTab = 'overview';
+  history.replaceState(null, '', '#' + state.activeTab);
+}
+
 async function signIn(key, email, password) {
   return mutate(key, 'POST', '/api/auth/login', { email, password }, {
-    onSuccess: (d) => {
-      setSession(d.token, d.user);
-      state.data = blankData();
-      state.ui.authMode = null;
-      state.ui.authError = null;
-      state.forms.login = blankForms().login;
-    },
+    onSuccess: startSession,
     onError: (res) => {
       state.ui.authError = errorText(res);
     },
-    success: (d) => `Signed in as ${d.user.name} (${roleLabel(d.user.role)})`,
-    refresh: () => Promise.all([loadDemoAccounts(), LOADERS[state.activeTab]?.()]),
+    success: (d) => ({ title: `Welcome back, ${firstName(d.user.name)}`, message: `Signed in as ${roleLabel(d.user.role)}.` }),
+    refresh: () => LOADERS[state.activeTab]?.(),
   });
-}
-
-function switchPersona(email) {
-  if (state.user?.email === email) return null;
-  return signIn(`persona:${email}`, email, state.demo.password);
 }
 
 function joinOrRenew() {
   return mutate('joinOrRenew', 'POST', '/api/memberships/join-or-renew', undefined, {
     success: (d) => (d.action === 'JOINED'
-      ? `Welcome to Skyline! Member code ${d.user.membership.code} · paid ${inr(d.fee)}`
-      : `Renewed until ${fmtDate(d.user.membership.expires_at)} · paid ${inr(d.fee)}`),
+      ? { title: 'Welcome to Skyline!', message: `Your member code is ${d.user.membership.code}. Paid ${inr(d.fee)}.` }
+      : { title: 'Membership Renewed', message: `Active until ${fmtDate(d.user.membership.expires_at)}. Paid ${inr(d.fee)}.` }),
     refresh: async () => {
-      await Promise.all([refreshSession(), loadDemoAccounts()]);
+      await refreshSession();
       await LOADERS[state.activeTab]?.();
     },
   });
@@ -657,8 +713,8 @@ function checkIn(rawCode, key) {
     onError: (res) => {
       state.ui.lastCheckIn = {
         ok: false,
-        title: res.status === 409 ? 'Already checked in: do not admit twice' : STATUS_TEXT[res.status] || 'Check-in failed',
-        detail: `${code} · ${errorText(res)}${res.data?.attendee?.name ? ` (${res.data.attendee.name})` : ''}`,
+        title: res.status === 409 ? 'Already checked in: do not admit twice' : friendlyError(res).title,
+        detail: `${code} · ${errorText(res)}`,
       };
     },
     success: (d) => `${d.attendee.name} checked in · ${d.event.checked_in_count}/${d.event.tickets_sold} present`,
@@ -760,7 +816,6 @@ function codeChip(code) {
 // ============================================================================ view: overview (scene 1)
 
 function viewOverview() {
-  if (!state.user) return viewWelcome();
   const u = state.user;
   return `
     ${pageHead('Scene 1 · Membership lifecycle', `Welcome back, ${esc(firstName(u.name))}`, `${roleLabel(u.role)} · ${esc(u.email)}`)}
@@ -769,43 +824,127 @@ function viewOverview() {
       <div class="stack">${membershipCard(u)}</div>
       ${benefitsCard()}
     </div>
-    <div class="mt-16">${isStaff() ? lookupPanel() : lockedPanel('Door Member Lookup', 'Volunteers and admins use this at the door to verify a member in under a second. The lookup endpoint returns 403 for students.')}</div>`;
+    <div class="mt-16">${isStaff() ? lookupPanel() : lockedPanel('Door Member Lookup', 'Club staff (volunteers, the Treasurer and the Admin) use this at the door to verify a member in under a second.')}</div>`;
 }
 
-function viewWelcome() {
-  const accounts = state.demo.accounts;
-  const cards = accounts.length
-    ? accounts.map((a) => {
-      const info = personaInfo(a);
-      const busy = state.pendingAction === `persona:${a.email}`;
-      return `<button type="button" class="persona-card" data-action="persona" data-email="${esc(a.email)}"${state.isLoading ? ' disabled' : ''}>
-          <span class="pc-head">${avatar(a.name, a.role)}<span><b>${esc(a.name)}</b><br><small>${esc(info.label)}</small></span></span>
-          <p>${esc(info.blurb)}</p>
-          <span class="pc-cta">${busy ? '<span class="spinner"></span> Signing in…' : 'Sign in as ' + esc(firstName(a.name)) + ' →'}</span>
-        </button>`;
-    }).join('')
-    : `<p>${state.booting ? 'Loading demo personas…' : 'Demo personas are disabled on this server. Sign in or register to continue.'}</p>`;
+// ============================================================================ view: sign-in page (logged out)
 
-  return `
-    <section class="hero">
-      <div class="scene" style="color:#fde68a">ODOO × LDCE HACKATHON 2026 · GRAND FINALE</div>
-      <h1>Skyline Student Association ERP</h1>
-      <p>Memberships, event ticketing with door check-in, announcements, the merch store, the bake-sale planner and the treasurer's books, all on one transactional SQLite backend. Pick a persona to see the app through their eyes.</p>
-      <div class="persona-cards">${cards}</div>
-      <div class="row mt-16">
-        ${btn('Sign in', 'openAuth', { data: { mode: 'login' }, mutation: false, variant: 'secondary' })}
-        ${btn('Register a new student', 'openAuth', { data: { mode: 'register' }, mutation: false, variant: 'ghost' })}
-      </div>
-    </section>
-    <div class="grid grid-3">
-      ${welcomeTip('🎟️', 'Tiered ticketing', 'Members pay the member price, everyone else the guest price, decided by the server from the live membership row.')}
-      ${welcomeTip('🔒', 'Race-proof writes', 'Every purchase, check-in, pickup and payout runs in a BEGIN IMMEDIATE transaction, so nothing is ever sold or paid twice.')}
-      ${welcomeTip('🧾', 'Live API proof', 'Open the Live API Inspector at the bottom to see each request, its status code and the exact JSON the server returned.')}
+function themeToggle(extraClass = '') {
+  const dark = state.ui.theme === 'dark';
+  return `<button type="button" class="icon-btn theme-toggle ${extraClass}" data-action="toggleTheme" title="Switch to ${dark ? 'light' : 'dark'} mode" aria-label="Switch to ${dark ? 'light' : 'dark'} mode">${dark ? ICONS.sun : ICONS.moon}</button>`;
+}
+
+function passwordInput(model, { autocomplete = 'current-password', placeholder = '' } = {}) {
+  const shown = state.ui.showPassword;
+  return `<div class="password-field">
+      ${input(model, { type: shown ? 'text' : 'password', placeholder, attrs: `autocomplete="${autocomplete}" required` })}
+      <button type="button" class="reveal" data-action="togglePassword" aria-label="${shown ? 'Hide' : 'Show'} password" title="${shown ? 'Hide' : 'Show'} password">${shown ? ICONS.eyeOff : ICONS.eye}</button>
     </div>`;
 }
 
-function welcomeTip(icon, title, text) {
-  return `<div class="card"><div class="card-body"><div style="font-size:22px">${icon}</div><h3 class="mt-8">${title}</h3><p class="muted mt-8">${text}</p></div></div>`;
+function authLink(view, label) {
+  return `<button type="button" class="link-btn" data-action="authView" data-view="${view}">${label}</button>`;
+}
+
+function quickFillCard() {
+  const { accounts, password } = state.demo;
+  if (!accounts.length) return '';
+  const open = state.ui.quickFillOpen;
+  const rows = accounts.map((a) => `<button type="button" class="qf-row" data-action="quickFill" data-email="${esc(a.email)}">
+      ${avatar(a.name, a.role)}
+      <span class="qf-text"><b>${esc(a.name)}</b><small>${esc(a.email)}</small></span>
+      ${badge(roleLabel(a.role), ROLE_TONE[a.role])}
+    </button>`).join('');
+  return `<div class="quickfill${open ? ' open' : ''}">
+      <button type="button" class="qf-head" data-action="toggleQuickFill" aria-expanded="${open}">
+        <span>🔑 Quick Fill Credentials</span><span class="small">${open ? 'Hide ▲' : `${accounts.length} demo accounts ▼`}</span>
+      </button>
+      ${open ? `<div class="qf-body"><p class="small">Click an account to fill the sign-in form. Password for all: <code>${esc(password)}</code></p>${rows}</div>` : ''}
+    </div>`;
+}
+
+function authForm() {
+  const view = state.ui.authView;
+  const error = state.ui.authError ? `<div class="note note-amber">${esc(state.ui.authError)}</div>` : '';
+  if (view === 'register') {
+    return `<form class="form" data-form="register">
+        <div><h2>Create your student account</h2><p class="muted">New accounts start as students without a membership. You can join the club from your dashboard.</p></div>
+        ${field('Full name', input('forms.register.name', { placeholder: 'e.g. Ananya Patel', attrs: 'autocomplete="name" required' }), { forId: 'forms-register-name' })}
+        ${field('College email', input('forms.register.email', { type: 'email', placeholder: 'you@skyline.edu', attrs: 'autocomplete="email" required' }), { forId: 'forms-register-email' })}
+        ${field('Password (8+ characters)', passwordInput('forms.register.password', { autocomplete: 'new-password' }), { forId: 'forms-register-password' })}
+        ${field('Confirm password', passwordInput('forms.register.confirm', { autocomplete: 'new-password' }), { forId: 'forms-register-confirm' })}
+        ${error}
+        ${submitBtn('register', 'Create Student Account', { block: true })}
+        <p class="small muted center">Already a member? ${authLink('signin', 'Sign in')}</p>
+      </form>`;
+  }
+  if (view === 'forgot-password') {
+    return `<form class="form" data-form="forgotPassword">
+        <div>${authLink('signin', '← Back to sign in')}<h2 class="mt-8">Reset your password</h2><p class="muted">Confirm it's you with your membership code or your full name, then choose a new password.</p></div>
+        ${field('Account email', input('forms.forgotPassword.email', { type: 'email', placeholder: 'you@skyline.edu', attrs: 'autocomplete="username" required' }), { forId: 'forms-forgotPassword-email' })}
+        ${field('Membership code or full name', input('forms.forgotPassword.verification', { placeholder: 'SKY-2026-XXX or your full name', attrs: 'required' }), { forId: 'forms-forgotPassword-verification' })}
+        ${field('New password (6+ characters)', passwordInput('forms.forgotPassword.new_password', { autocomplete: 'new-password' }), { forId: 'forms-forgotPassword-new_password' })}
+        ${error}
+        ${submitBtn('forgotPassword', 'Reset Password & Sign In', { block: true })}
+        <p class="small muted center">Don't remember your email? ${authLink('forgot-email', 'Find your account')}</p>
+      </form>`;
+  }
+  if (view === 'forgot-email') {
+    const found = state.ui.recoveredAccount;
+    return `<form class="form" data-form="forgotEmail">
+        <div>${authLink('signin', '← Back to sign in')}<h2 class="mt-8">Find your account</h2><p class="muted">Enter your full name or your membership ID to see the email you registered with.</p></div>
+        ${field('Full name or membership ID', input('forms.forgotEmail.query', { placeholder: 'e.g. Rohan Verma or SKY-2026-004', attrs: 'required' }), { forId: 'forms-forgotEmail-query' })}
+        ${error}
+        ${submitBtn('forgotEmail', 'Find My Account', { block: true })}
+        ${found ? `<div class="found-account">
+            ${avatar(found.name, found.role)}
+            <div><b>${esc(found.name)}</b><div class="mono">${esc(found.email)}</div><div class="row mt-8">${badge(roleLabel(found.role), ROLE_TONE[found.role])}${found.membership_code ? codeChip(found.membership_code) : ''}</div></div>
+            <button type="button" class="btn btn-primary btn-block mt-8" data-action="useRecoveredEmail">Use this email to Sign In</button>
+          </div>` : ''}
+      </form>`;
+  }
+  return `<form class="form" data-form="login">
+      <div><h2>Sign in to Skyline</h2><p class="muted">Welcome back! Use your college email and password.</p></div>
+      ${field('Email', input('forms.login.email', { type: 'email', placeholder: 'you@skyline.edu', attrs: 'autocomplete="username" required' }), { forId: 'forms-login-email' })}
+      <div class="field">
+        <div class="row-between"><label for="forms-login-password">Password</label>${authLink('forgot-password', 'Forgot password?')}</div>
+        ${passwordInput('forms.login.password')}
+      </div>
+      ${error}
+      ${submitBtn('login', 'Sign In', { block: true })}
+      <p class="small muted center">${authLink('forgot-email', 'Forgot email?')} · New here? ${authLink('register', 'Create a student account')}</p>
+    </form>`;
+}
+
+function viewAuth() {
+  const view = state.ui.authView;
+  const tabs = view === 'signin' || view === 'register'
+    ? `<div class="auth-tabs" role="tablist">
+        <button type="button" role="tab" class="${view === 'signin' ? 'active' : ''}" data-action="authView" data-view="signin" aria-selected="${view === 'signin'}">Sign In</button>
+        <button type="button" role="tab" class="${view === 'register' ? 'active' : ''}" data-action="authView" data-view="register" aria-selected="${view === 'register'}">Create Account</button>
+      </div>`
+    : '';
+  const highlight = (icon, title, text) => `<li><span class="hl-icon" aria-hidden="true">${icon}</span><div><b>${title}</b><span>${text}</span></div></li>`;
+  return `<div class="auth-page">
+      <section class="auth-brand">
+        <div class="auth-logo"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z" fill="currentColor"/></svg></span>
+          <span><b>Skyline</b><small>Student Association ERP</small></span></div>
+        <h1>Run the whole club from one place.</h1>
+        <p class="lead">Memberships, Spring Gala tickets and door check-in, announcements, merch, the bake-sale planner and the treasurer's books, in one secure system.</p>
+        <ul class="auth-highlights">
+          ${highlight('🎟️', 'Member pricing, done right', 'Members pay less for events and merch, decided securely on the server.')}
+          ${highlight('🚪', 'Instant door check-in', 'Volunteers scan a ticket code; a second scan is always refused.')}
+          ${highlight('🧾', 'Honest books', 'Every rupee in and out is recorded, and only the Treasurer or Admin approves payouts.')}
+          ${highlight('🧁', 'Fundraisers on track', 'A live task board shows the bake sale’s progress at a glance.')}
+        </ul>
+        ${quickFillCard()}
+      </section>
+      <section class="auth-panel">
+        <div class="auth-top">${themeToggle()}</div>
+        <div class="auth-card">${tabs}${authForm()}</div>
+        <p class="small muted center">Odoo × LDCE Hackathon 2026 · Skyline Student Association</p>
+      </section>
+    </div>`;
 }
 
 function membershipBanner(m) {
@@ -907,7 +1046,7 @@ function lookupPanel() {
     : `<tr><td colspan="6">${emptyState('🔍', data ? 'No one matches that search.' : 'Loading…')}</td></tr>`;
 
   return `<section class="card">
-    <div class="card-head"><h2>🚪 Door Member Lookup ${badge('Volunteer · Admin', 'teal')}</h2><span class="sub">GET /api/memberships/lookup</span></div>
+    <div class="card-head"><h2>🚪 Door Member Lookup ${badge('Staff', 'teal')}</h2><span class="sub">GET /api/memberships/lookup</span></div>
     <div class="card-body">
       ${input('ui.lookupQuery', { id: 'lookup-q', placeholder: 'Search by name, email or SKY-2026-XXX…', cls: 'input-search input-lg', attrs: 'data-search="lookup" autocomplete="off" aria-label="Search members"' })}
       <div class="small muted mt-8">${status}</div>
@@ -1038,7 +1177,7 @@ function checkInDesk() {
 
   return `<section class="card">
     <div class="card-head">
-      <h2>🛂 Door Ticket Scanner & Check-In Desk ${badge('Volunteer · Admin', 'teal')}</h2>
+      <h2>🛂 Door Ticket Scanner & Check-In Desk ${badge('Staff', 'teal')}</h2>
       <div class="row"><label class="small strong" for="desk-event">Event</label>${select('ui.deskEventId', options, { id: 'desk-event', attrs: 'data-reload="desk"' })}</div>
     </div>
     <div class="card-body stack" style="gap:14px">
@@ -1113,7 +1252,7 @@ function postForm() {
   const audience = ['ALL', 'MEMBERS_ONLY'].map((value) => `<label><input type="radio" name="audience" value="${value}" data-model="forms.announcement.target_audience"${f.target_audience === value ? ' checked' : ''}>${value === 'ALL' ? 'Everyone' : '🔒 Members only'}</label>`).join('');
   const last = state.ui.lastBroadcast;
   return `<section class="card">
-    <div class="card-head"><h2>📣 Post Official Announcement</h2>${badge('Volunteer · Admin', 'teal')}</div>
+    <div class="card-head"><h2>📣 Post Official Announcement</h2>${badge('Staff', 'teal')}</div>
     <form class="card-body form" data-form="announcement">
       ${field('Title', input('forms.announcement.title', { placeholder: 'e.g. Gala seating chart is live' }), { forId: 'forms-announcement-title' })}
       ${field('Message', textarea('forms.announcement.content', { placeholder: 'What do members need to know?' }), { forId: 'forms-announcement-content' })}
@@ -1223,7 +1362,7 @@ function pickupQueue() {
     : `<tr><td colspan="9">${emptyState('📦', data ? 'No orders match.' : 'Loading…')}</td></tr>`;
 
   return `<section class="card">
-    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Volunteer · Admin', 'teal')}</h2><span class="sub">PATCH /api/merch/orders/:code/pickup records who handed it over and when</span></div>
+    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Staff', 'teal')}</h2><span class="sub">PATCH /api/merch/orders/:code/pickup records who handed it over and when</span></div>
     <div class="card-body stack" style="gap:14px">
       <div class="kpis">
         ${kpi('Orders', s ? s.total_orders : '—')}
@@ -1301,7 +1440,7 @@ function taskCard(t) {
       data: { id: t.id, status: next },
       variant: 'locked',
       size: 'sm',
-      title: 'Only the assignee or a volunteer/admin can move this task. Click to watch the server refuse it (403).',
+      title: 'Only the assignee or a staff member can move this task. Click to watch the server refuse it.',
     }))).join('');
 
   return `<div class="task${t.is_overdue ? ' overdue' : ''}${t.status === 'DONE' ? ' done' : ''}">
@@ -1314,7 +1453,7 @@ function taskCard(t) {
 function addTaskForm(campaigns) {
   const people = [['', 'Unassigned'], ...(state.data.assignees || []).map((u) => [u.id, `${u.name} (${roleLabel(u.role)})`])];
   return `<section class="card">
-    <div class="card-head"><h2>➕ Add Task ${badge('Volunteer · Admin', 'teal')}</h2><span class="sub">POST /api/tasks · new tasks start in To do</span></div>
+    <div class="card-head"><h2>➕ Add Task ${badge('Staff', 'teal')}</h2><span class="sub">POST /api/tasks · new tasks start in To do</span></div>
     <form class="card-body form" data-form="task">
       <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         ${field('Task', input('forms.task.title', { placeholder: 'e.g. Print price labels' }), { forId: 'forms-task-title' })}
@@ -1331,11 +1470,11 @@ function addTaskForm(campaigns) {
 
 function viewFinance() {
   const head = pageHead("Scene 6 · Treasurer's office", "Treasurer's Financial Books & Reimbursements",
-    'Money only leaves the club when an admin approves a claim; the payout and its ledger row commit together or not at all.');
+    'Money only leaves the club when the Treasurer or Admin approves a claim; the payout and its ledger row commit together or not at all.');
   if (!state.user) return head + signInPrompt('see reimbursements and the club books');
   return `${head}<div class="stack">
     ${reimbursementsSection()}
-    ${isStaff() ? ledgerSection() : lockedPanel("Treasurer's semester ledger", 'The books are visible to volunteers and admins only. The ledger endpoint returns 403 for students.')}
+    ${isStaff() ? ledgerSection() : lockedPanel("Treasurer's semester ledger", 'The books are visible to staff (volunteers, the Treasurer and the Admin) only; students are refused by the server.')}
   </div>`;
 }
 
@@ -1366,7 +1505,7 @@ function reimbursementsSection() {
   </section>`;
 
   if (!isStaff()) {
-    return `${table}<div class="note mt-8">Only volunteers and admins can submit expense claims for club purchases.</div>`;
+    return `${table}<div class="note mt-8">Only staff (volunteers, the Treasurer and the Admin) can submit expense claims for club purchases.</div>`;
   }
   return `${table}${expenseForm()}`;
 }
@@ -1376,13 +1515,13 @@ function reimbursementRow(r) {
   const category = EXPENSE_CATEGORIES.find(([value]) => value === r.category)?.[1] || r.category;
   let action = '<span class="small muted">—</span>';
   if (r.status === 'PENDING') {
-    if (isAdmin() && r.volunteer_id === state.user.id) {
-      action = `<div class="note note-amber small" style="max-width:240px"><b>Segregation of duties:</b> you submitted this claim, so another admin must review it.</div>
-        <div class="mt-8">${btn('🔒 Approve anyway', 'review', { data: { id: r.id, decision: 'APPROVED_PAID' }, variant: 'locked', size: 'sm', title: 'The server refuses self-approval with 403.' })}</div>`;
-    } else if (isAdmin()) {
+    if (isFinance() && r.volunteer_id === state.user.id) {
+      action = `<div class="note note-amber small" style="max-width:240px"><b>Separation of duties:</b> you submitted this claim, so another Treasurer or Admin must review it.</div>
+        <div class="mt-8">${btn('🔒 Approve anyway', 'review', { data: { id: r.id, decision: 'APPROVED_PAID' }, variant: 'locked', size: 'sm', title: 'The server refuses to let anyone approve their own claim.' })}</div>`;
+    } else if (isFinance()) {
       action = `<div class="row">${btn('Approve & Reimburse', 'review', { data: { id: r.id, decision: 'APPROVED_PAID' }, variant: 'success', size: 'sm' })}${btn('Reject', 'review', { data: { id: r.id, decision: 'REJECTED' }, variant: 'danger', size: 'sm' })}</div>`;
     } else if (isStaff()) {
-      action = `<div class="small muted">Awaiting the treasurer</div><div class="mt-8">${btn('🔒 Approve', 'review', { data: { id: r.id, decision: 'APPROVED_PAID' }, variant: 'locked', size: 'sm', title: 'Only admins can approve. Click to watch the server answer 403.' })}</div>`;
+      action = `<div class="small muted">Awaiting the treasurer</div><div class="mt-8">${btn('🔒 Approve', 'review', { data: { id: r.id, decision: 'APPROVED_PAID' }, variant: 'locked', size: 'sm', title: 'Only the Treasurer or Admin can approve. Click to see the server refuse it.' })}</div>`;
     } else {
       action = '<span class="small muted">Awaiting the treasurer</span>';
     }
@@ -1400,7 +1539,7 @@ function reimbursementRow(r) {
 
 function expenseForm() {
   return `<section class="card">
-    <div class="card-head"><h2>➕ Submit Expense Receipt ${badge('Volunteer · Admin', 'teal')}</h2><span class="sub">Nothing is written to the ledger yet: money leaves the club only when an admin approves the claim</span></div>
+    <div class="card-head"><h2>➕ Submit Expense Receipt ${badge('Staff', 'teal')}</h2><span class="sub">Nothing is written to the ledger yet: money leaves the club only when the Treasurer or Admin approves the claim</span></div>
     <form class="card-body form" data-form="expense">
       <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         ${field('What did you buy?', input('forms.expense.title', { placeholder: 'e.g. Bake Sale Cocoa & Sugar' }), { forId: 'forms-expense-title' })}
@@ -1458,14 +1597,14 @@ function ledgerSection() {
         <span class="${balanced ? 'ok' : 'bad'}">${balanced ? '✓' : '✗'} In − Out = Net (${inr(s.total_in)} − ${inr(s.total_out)} = ${inr(s.net_balance)})</span>
         <span class="${categoriesMatch ? 'ok' : 'bad'}">${categoriesMatch ? '✓' : '✗'} Categories add up to the totals</span>
       </div>
-      ${btn('⬇ Export Semester Books (CSV)', 'exportLedger', { title: 'Download the full ledger with totals as a CSV file' })}
+      ${isFinance() ? btn('⬇ Export Semester Books (CSV)', 'exportLedger', { title: 'Download the full ledger with totals as a CSV file' }) : ''}
     </div>
-    <div class="${isAdmin() ? 'split' : ''}">
+    <div class="${isFinance() ? 'split' : ''}">
       <section class="card">
         <div class="card-head"><h2>📊 Where every rupee came from and went</h2><span class="sub">all 5 ledger categories</span></div>
         <div class="card-body">${breakdown}</div>
       </section>
-      ${isAdmin() ? incomeForm() : ''}
+      ${isFinance() ? incomeForm() : ''}
     </div>
     <section class="card">
       <div class="card-head">
@@ -1485,7 +1624,7 @@ function ledgerSection() {
 
 function incomeForm() {
   return `<section class="card">
-    <div class="card-head"><h2>💰 Record Fundraiser Income</h2>${badge('Treasurer', 'plum')}</div>
+    <div class="card-head"><h2>💰 Record Fundraiser Income</h2>${badge('Treasurer · Admin', 'amber')}</div>
     <form class="card-body form" data-form="income">
       ${field('Amount (₹)', input('forms.income.amount', { type: 'number', attrs: 'min="1" step="1"' }), { forId: 'forms-income-amount' })}
       ${field('Description', input('forms.income.description', { placeholder: 'Spring Bake Sale — Saturday stall takings' }), { forId: 'forms-income-description' })}
@@ -1496,42 +1635,78 @@ function incomeForm() {
   </section>`;
 }
 
-// ============================================================================ chrome: topbar, nav, inspector, toasts, modal
+// ============================================================================ view: profile & settings
+
+function viewProfile() {
+  const u = state.user;
+  const dark = state.ui.theme === 'dark';
+  const themeOption = (value, label, icon) => `<button type="button" class="theme-option${state.ui.theme === value ? ' active' : ''}" data-action="setTheme" data-theme="${value}" aria-pressed="${state.ui.theme === value}">${icon}<span>${label}</span></button>`;
+  return `${pageHead('Account', 'My Profile & Settings', 'Your membership card, account details, password and appearance.')}
+    <div class="grid grid-2">
+      <div class="stack">${membershipCard(u)}</div>
+      <div class="stack">
+        <section class="card">
+          <div class="card-head"><h2>👤 Account</h2>${badge(roleLabel(u.role), ROLE_TONE[u.role])}</div>
+          <div class="card-body">
+            <div class="profile-head">${avatar(u.name, u.role)}<div><b>${esc(u.name)}</b><div class="small muted">${esc(u.email)} · member since ${fmtDate(u.created_at)}</div></div></div>
+          </div>
+          <form class="card-body form" data-form="profileName" style="padding-top:0">
+            ${field('Full name', input('forms.profile.name', { placeholder: u.name, attrs: 'autocomplete="name" required' }), { forId: 'forms-profile-name' })}
+            <div>${submitBtn('profileName', 'Save Name')}</div>
+          </form>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>🔒 Change Password</h2></div>
+          <form class="card-body form" data-form="profilePassword">
+            ${field('Current password', input('forms.password.current', { type: 'password', attrs: 'autocomplete="current-password" required' }), { forId: 'forms-password-current' })}
+            <div class="form-grid">
+              ${field('New password (6+ characters)', input('forms.password.next', { type: 'password', attrs: 'autocomplete="new-password" required' }), { forId: 'forms-password-next' })}
+              ${field('Confirm new password', input('forms.password.confirm', { type: 'password', attrs: 'autocomplete="new-password" required' }), { forId: 'forms-password-confirm' })}
+            </div>
+            <div>${submitBtn('profilePassword', 'Update Password')}</div>
+          </form>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>🎨 Appearance</h2><span class="sub">Saved on this device</span></div>
+          <div class="card-body"><div class="theme-options">${themeOption('light', 'Light', ICONS.sun)}${themeOption('dark', 'Dark', ICONS.moon)}</div>
+            <p class="small muted mt-8">Currently using the ${dark ? 'dark' : 'light'} theme.</p></div>
+        </section>
+        <section class="card">
+          <div class="card-body row-between"><div><b>Sign out</b><div class="small muted">End your session on this device.</div></div>${btn('Sign Out', 'logout', { variant: 'danger', mutation: false })}</div>
+        </section>
+      </div>
+    </div>`;
+}
+
+// ============================================================================ chrome: header, sidebar, toasts
 
 function renderTopbar() {
-  const accounts = state.demo.accounts;
-  const personas = accounts.length
-    ? `<span class="persona-label">Demo</span>${accounts.map((a) => {
-      const info = personaInfo(a);
-      const active = state.user?.email === a.email;
-      const busy = state.pendingAction === `persona:${a.email}`;
-      const due = a.membership.status === 'ACTIVE' && a.membership.renewal_due;
-      return `<button type="button" class="persona${active ? ' active' : ''}" data-action="persona" data-email="${esc(a.email)}" aria-pressed="${active}"${state.isLoading ? ' disabled' : ''} title="${esc(`${a.name} · ${info.label}: ${info.blurb}`)}">
-          <span class="avatar role-${esc(a.role)}">${busy ? '<span class="spinner"></span>' : esc(initials(a.name))}</span>
-          <span class="persona-text"><b>${esc(firstName(a.name))}</b><small>${esc(info.label)}</small></span>
-          ${due ? '<span class="dot-alert" aria-label="Renewal due"></span>' : ''}
-        </button>`;
-    }).join('')}`
-    : '';
-  patch(document.getElementById('personas'), personas);
-
   const u = state.user;
   const session = u
-    ? `<span class="who"><b>${esc(u.name)}</b><span>${roleLabel(u.role)} · ${esc(u.membership.status)}</span></span>
-       <button type="button" class="btn btn-sm btn-topbar" data-action="logout">Log out</button>`
-    : `<button type="button" class="btn btn-sm btn-topbar" data-action="openAuth" data-mode="login">Sign in</button>
-       <button type="button" class="btn btn-sm btn-topbar" data-action="openAuth" data-mode="register">Register</button>`;
+    ? `${themeToggle('on-dark')}
+       <a class="user-chip" href="#profile" title="My Profile & Settings">
+         ${avatar(u.name, u.role)}
+         <span class="who"><b>${esc(u.name)}</b>${badge(roleLabel(u.role), ROLE_TONE[u.role])}</span>
+       </a>`
+    : '';
   patch(document.getElementById('session'), session);
 }
 
 function renderNav() {
   const h = state.health;
-  const foot = h
-    ? `<span class="ok">●</span> API healthy · ${esc(h.database.driver)}<br>SQLite ${esc(h.database.sqlite_version)} · ${esc(String(h.database.journal_mode).toUpperCase())} · FK ${h.database.foreign_keys ? 'ON' : 'OFF'}`
-    : 'Checking API health…';
-  const items = TABS.map((t) => `<a class="nav-item${state.activeTab === t.id ? ' active' : ''}" href="#${t.id}"${state.activeTab === t.id ? ' aria-current="page"' : ''}>
-      ${ICONS[t.id]}<span class="nav-text"><b>${t.label}</b><small>${t.scene}</small></span></a>`).join('');
-  patch(document.getElementById('nav'), `<div class="nav-heading">Skyline ERP</div>${items}<div class="nav-foot">${foot}</div>`);
+  const health = h
+    ? `<span class="ok">●</span> Database healthy · ${esc(h.database.driver)}<br>SQLite ${esc(h.database.sqlite_version)} · ${esc(String(h.database.journal_mode).toUpperCase())} · FK ${h.database.foreign_keys ? 'ON' : 'OFF'}`
+    : 'Checking database health…';
+  const item = (t) => `<a class="nav-item${state.activeTab === t.id ? ' active' : ''}" href="#${t.id}" title="${esc(t.label)}"${state.activeTab === t.id ? ' aria-current="page"' : ''}>
+      ${ICONS[t.id]}<span class="nav-text"><b>${t.label}</b><small>${t.scene}</small></span></a>`;
+  const scenes = TABS.filter((t) => t.id !== 'profile').map(item).join('');
+  const account = TABS.filter((t) => t.id === 'profile').map(item).join('');
+  const proof = isStaff()
+    ? `<button type="button" class="proof-btn" data-action="openProof" title="Live PRAGMA, table counts and EXPLAIN QUERY PLAN from the running database">🗄 <span class="nav-text">DB &amp; Index Proof</span></button>`
+    : '';
+  patch(document.getElementById('nav'), `<div class="nav-heading">Club</div>${scenes}
+    <div class="nav-heading">Account</div>${account}
+    <div class="nav-foot">${proof}<div class="nav-text db-health">${health}</div></div>`);
 }
 
 const VIEWS = {
@@ -1541,12 +1716,13 @@ const VIEWS = {
   merch: viewMerch,
   tasks: viewTasks,
   finance: viewFinance,
+  profile: viewProfile,
 };
 
 function renderMain() {
   let html;
   try {
-    html = VIEWS[state.activeTab]();
+    html = state.user ? VIEWS[state.activeTab]() : viewAuth();
   } catch (err) {
     console.error(err);
     html = banner('danger', '⚠️', 'This view failed to render', esc(err.message));
@@ -1554,63 +1730,12 @@ function renderMain() {
   patch(document.getElementById('main'), html);
 }
 
-function methodTag(method) {
-  return `<span class="method ${esc(method)}">${esc(method)}</span>`;
-}
-
-function statusTag(status) {
-  return `<span class="status-code s${String(status)[0]}">${status || 'ERR'} ${esc(STATUS_TEXT[status] || '')}</span>`;
-}
-
-function highlightJson(value) {
-  const json = esc(JSON.stringify(value, null, 2) ?? 'null');
-  return json.replace(/(&quot;(?:\\.|[^&\\]|&(?!quot;))*?&quot;)(\s*:)?|\b(true|false)\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, (match, str, colon, bool) => {
-    if (str) return colon ? `<span class="j-key">${str}</span>${colon}` : `<span class="j-str">${str}</span>`;
-    if (bool) return `<span class="j-bool">${match}</span>`;
-    if (match === 'null') return `<span class="j-null">${match}</span>`;
-    return `<span class="j-num">${match}</span>`;
-  });
-}
-
-function renderInspector() {
-  const { open, entries, selectedId } = state.inspector;
-  const selected = entries.find((e) => e.id === selectedId) || entries[0];
-  const latest = entries.find((e) => e.mutation) || entries[0];
-  const summary = latest
-    ? `<span class="last">${methodTag(latest.method)}<code>${esc(latest.path)}</code>${statusTag(latest.status)}<span class="small" style="color:#94a3b8">${latest.ms} ms</span></span>`
-    : '<span class="last small" style="color:#94a3b8">No requests yet</span>';
-
-  let body = '';
-  if (open) {
-    const list = entries.length
-      ? entries.map((e) => `<li><button type="button" class="${selected && e.id === selected.id ? 'selected' : ''}" data-action="inspect" data-id="${e.id}">
-          ${methodTag(e.method)}<span class="path">${esc(e.path)}</span>${statusTag(e.status)}</button></li>`).join('')
-      : '<li class="small" style="padding:12px;color:#94a3b8">Requests appear here as you use the app.</li>';
-    const detail = selected
-      ? `<div class="req-line">${methodTag(selected.method)}<span>${esc(selected.path)}</span>→${statusTag(selected.status)}<span style="color:#94a3b8">${selected.ms} ms · ${fmtTime(selected.at)}</span></div>
-        <div><h4>Request headers</h4><div class="headers">Authorization: ${selected.token ? `Bearer …${esc(selected.token.slice(-10))}` : '(none: anonymous request)'}${selected.request ? '<br>Content-Type: application/json' : ''}</div></div>
-        <div><h4>Request payload</h4><pre>${selected.request ? highlightJson(selected.request) : '<span class="j-null">(no body)</span>'}</pre></div>
-        <div><h4>Response body · HTTP ${selected.status}</h4><pre>${highlightJson(selected.response)}</pre></div>
-        <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copyCurl" data-id="${selected.id}">Copy as cURL</button><button type="button" class="btn btn-secondary btn-sm" data-action="clearInspector">Clear</button></div>`
-      : '<p style="color:#94a3b8">Select a request.</p>';
-    body = `<div class="inspector-body"><ul class="inspector-list">${list}</ul><div class="inspector-detail">${detail}</div></div>`;
-  }
-
-  const proofButton = isStaff()
-    ? '<button type="button" class="proof-btn" data-action="openProof" title="Live PRAGMA, table counts and EXPLAIN QUERY PLAN from the running database">🗄 DB &amp; Index Proof</button>'
-    : '';
-  patch(document.getElementById('inspector'), `<div class="inspector-head">
-      <button type="button" class="inspector-bar" data-action="toggleInspector" aria-expanded="${open}">
-        <span class="title"><span class="live-dot"></span>Live API Inspector</span>${summary}
-        <span class="chev">${plural(entries.length, 'request')} · ${open ? 'Hide ▼' : 'Show ▲'}</span>
-      </button>${proofButton}
-    </div>${body}`);
-}
+const TOAST_ICON = { ok: '✓', err: '!', info: 'i' };
 
 function renderToasts() {
-  patch(document.getElementById('toasts'), state.toasts.map((t) => `<div class="toast ${t.ok ? 'ok' : 'err'}" data-action="dismissToast" data-id="${t.id}" role="status">
-      <span class="status">${t.status ? `${t.status} ${esc(t.statusText)}` : esc(t.statusText)}</span>
-      <div class="toast-body"><div class="toast-msg">${esc(t.message)}</div>${t.request ? `<div class="toast-req">${esc(t.request)}</div>` : ''}</div>
+  patch(document.getElementById('toasts'), state.toasts.map((t) => `<div class="toast ${t.kind}" data-action="dismissToast" data-id="${t.id}" role="status">
+      <span class="toast-icon" aria-hidden="true">${TOAST_ICON[t.kind]}</span>
+      <div class="toast-body"><div class="toast-title">${esc(t.title)}</div><div class="toast-msg">${esc(t.message)}</div></div>
     </div>`).join(''));
 }
 
@@ -1663,34 +1788,7 @@ function saveBlob(blob, filename) {
 }
 
 function renderModal() {
-  const mode = state.ui.authMode;
-  if (!mode) return patch(document.getElementById('modal-root'), state.ui.proofOpen ? proofModal() : '');
-  const demo = state.demo.password ? `<div class="note note-plum">Demo password for every persona: <code>${esc(state.demo.password)}</code></div>` : '';
-  const form = mode === 'login'
-    ? `<form class="card-body form" data-form="login">
-        ${field('Email', input('forms.login.email', { type: 'email', placeholder: 'you@skyline.edu', attrs: 'autocomplete="username" required' }), { forId: 'forms-login-email' })}
-        ${field('Password', input('forms.login.password', { type: 'password', attrs: 'autocomplete="current-password" required' }), { forId: 'forms-login-password' })}
-        ${state.ui.authError ? `<div class="note note-amber">${esc(state.ui.authError)}</div>` : ''}
-        ${submitBtn('login', 'Sign in', { block: true })}
-        ${demo}
-      </form>`
-    : `<form class="card-body form" data-form="register">
-        ${field('Full name', input('forms.register.name', { attrs: 'autocomplete="name" required' }), { forId: 'forms-register-name' })}
-        ${field('Email', input('forms.register.email', { type: 'email', attrs: 'autocomplete="email" required' }), { forId: 'forms-register-email' })}
-        ${field('Password (8+ characters)', input('forms.register.password', { type: 'password', attrs: 'autocomplete="new-password" minlength="8" required' }), { forId: 'forms-register-password' })}
-        ${state.ui.authError ? `<div class="note note-amber">${esc(state.ui.authError)}</div>` : ''}
-        ${submitBtn('register', 'Create account', { block: true })}
-        <div class="note">New accounts start as students without a membership. Join from the Overview tab.</div>
-      </form>`;
-
-  patch(document.getElementById('modal-root'), `<div class="modal-backdrop" data-action="closeModal" data-self="1">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
-      <div class="card-head"><h2 id="auth-title">${mode === 'login' ? 'Sign in to Skyline' : 'Create your Skyline account'}</h2><button type="button" class="icon-btn" data-action="closeModal" aria-label="Close">×</button></div>
-      <div class="tabs"><button type="button" class="${mode === 'login' ? 'active' : ''}" data-action="authMode" data-mode="login">Sign in</button><button type="button" class="${mode === 'register' ? 'active' : ''}" data-action="authMode" data-mode="register">Register</button></div>
-      ${form}
-    </div>
-  </div>`);
-  return undefined;
+  patch(document.getElementById('modal-root'), state.ui.proofOpen ? proofModal() : '');
 }
 
 // Replaces a region's HTML only when it changed, keeping keyboard focus and the
@@ -1725,39 +1823,91 @@ function safeSelection(el, prop) {
 }
 
 function render() {
+  document.body.classList.toggle('logged-out', !state.user);
+  document.body.classList.toggle('nav-collapsed', state.ui.navCollapsed);
+  document.body.classList.toggle('nav-open', state.ui.navOpen);
   renderTopbar();
   renderNav();
   renderMain();
-  renderInspector();
   renderToasts();
   renderModal();
+}
+
+// Light/dark theme on <html data-theme>, remembered on this device.
+function applyTheme(theme) {
+  state.ui.theme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = state.ui.theme;
+  try {
+    localStorage.setItem(THEME_KEY, state.ui.theme);
+  } catch {
+    // storage blocked: the theme just won't be remembered
+  }
+  render();
+}
+
+function isNarrowScreen() {
+  return window.matchMedia('(max-width: 900px)').matches;
 }
 
 // ============================================================================ event handlers
 
 const ACTIONS = {
-  persona: ({ email }) => switchPersona(email),
   logout: () => {
     clearSession();
-    infoToast('Signed out. Stateless tokens need no server call; the browser simply forgets it.');
-    loadTab();
+    state.ui.authView = 'signin';
+    state.ui.navOpen = false;
+    history.replaceState(null, '', '#overview');
+    state.activeTab = 'overview';
+    infoToast('You have been signed out of this device.', 'Signed Out');
     render();
   },
-  openAuth: ({ mode }) => {
-    state.ui.authMode = mode;
-    state.ui.authError = null;
-    renderModal();
-    document.getElementById(mode === 'login' ? 'forms-login-email' : 'forms-register-name')?.focus();
-  },
-  authMode: ({ mode }) => {
-    state.ui.authMode = mode;
-    state.ui.authError = null;
-    renderModal();
-  },
   closeModal: () => {
-    state.ui.authMode = null;
     state.ui.proofOpen = false;
     renderModal();
+  },
+  openAuth: ({ mode }) => {
+    state.ui.authView = mode === 'register' ? 'register' : 'signin';
+    render();
+  },
+  toggleNav: () => {
+    if (isNarrowScreen()) state.ui.navOpen = !state.ui.navOpen;
+    else state.ui.navCollapsed = !state.ui.navCollapsed;
+    render();
+  },
+  closeNav: () => {
+    state.ui.navOpen = false;
+    render();
+  },
+  toggleTheme: () => applyTheme(state.ui.theme === 'dark' ? 'light' : 'dark'),
+  setTheme: ({ theme }) => applyTheme(theme),
+  authView: ({ view }) => {
+    state.ui.authView = view;
+    state.ui.authError = null;
+    state.ui.showPassword = false;
+    renderMain();
+  },
+  togglePassword: () => {
+    state.ui.showPassword = !state.ui.showPassword;
+    renderMain();
+  },
+  toggleQuickFill: () => {
+    state.ui.quickFillOpen = !state.ui.quickFillOpen;
+    renderMain();
+  },
+  // Fills the sign-in form only; the user still presses Sign In.
+  quickFill: ({ email }) => {
+    state.forms.login = { email, password: state.demo.password || '' };
+    state.ui.authView = 'signin';
+    state.ui.authError = null;
+    renderMain();
+    document.querySelector('form[data-form="login"] button[type="submit"]')?.focus();
+  },
+  useRecoveredEmail: () => {
+    state.forms.login = { email: state.ui.recoveredAccount.email, password: '' };
+    state.ui.authView = 'signin';
+    state.ui.recoveredAccount = null;
+    renderMain();
+    document.getElementById('forms-login-password')?.focus();
   },
   joinOrRenew: () => joinOrRenew(),
   toggleEventForm: () => {
@@ -1765,7 +1915,7 @@ const ACTIONS = {
     renderMain();
   },
   buyTicket: ({ id }) => mutate(`buyTicket:${id}`, 'POST', `/api/events/${id}/tickets`, undefined, {
-    success: (d) => `Ticket ${d.ticket.ticket_code} · ${d.tier} price ${inr(d.price_paid)} · ${plural(d.seats_left, 'seat')} left`,
+    success: (d) => ({ title: 'Ticket Booked', message: `Your ticket for ${d.event.title} is ${d.ticket.ticket_code} (${d.tier.toLowerCase()} price ${inr(d.price_paid)}).` }),
     refresh: async () => {
       await Promise.all([refreshSession(), loadEvents()]);
       await loadDesk();
@@ -1831,40 +1981,14 @@ const ACTIONS = {
   },
   review: ({ id, decision }) => mutate(`review:${id}:${decision}`, 'PATCH', `/api/finance/reimbursements/${id}/review`, { decision }, {
     success: (d) => (d.transaction
-      ? `Approved · ${inr(d.transaction.amount)} paid to ${d.reimbursement.volunteer_name} (ledger ${signedInr(-d.transaction.amount)})`
-      : `Claim #${d.reimbursement.id} rejected · no money moved`),
+      ? { title: 'Claim Approved', message: `${inr(d.transaction.amount)} paid to ${d.reimbursement.volunteer_name} (ledger ${signedInr(-d.transaction.amount)}).` }
+      : { title: 'Claim Rejected', message: `Claim #${d.reimbursement.id} was rejected. No money moved.` }),
     refresh: () => Promise.all([loadReimbursements(), loadLedger()]),
   }),
-  toggleInspector: () => {
-    state.inspector.open = !state.inspector.open;
-    renderInspector();
-  },
-  inspect: ({ id }) => {
-    state.inspector.selectedId = Number(id);
-    renderInspector();
-  },
-  clearInspector: () => {
-    state.inspector.entries = [];
-    state.inspector.selectedId = null;
-    renderInspector();
-  },
-  copyCurl: ({ id }) => {
-    const entry = state.inspector.entries.find((e) => e.id === Number(id));
-    if (!entry) return;
-    const parts = [`curl -i -X ${entry.method} '${location.origin}${entry.path}'`];
-    if (entry.token) parts.push(`-H 'Authorization: Bearer ${entry.token}'`);
-    if (entry.request) parts.push("-H 'Content-Type: application/json'", `-d '${JSON.stringify(entry.request).replace(/'/g, "'\\''")}'`);
-    const text = parts.join(' \\\n  ');
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(() => infoToast('cURL command copied to the clipboard.'), () => window.prompt('Copy this cURL command:', text));
-    } else {
-      window.prompt('Copy this cURL command:', text);
-    }
-  },
   dismissToast: ({ id }) => dismissToast(Number(id)),
   exportLedger: () => mutate('exportLedger', 'GET', '/api/finance/ledger/export.csv', undefined, {
     raw: true,
-    success: (d) => `Semester books exported · ${(d.bytes / 1024).toFixed(1)} KB CSV downloaded`,
+    success: (d) => ({ title: 'Books Exported', message: `skyline-semester-ledger.csv downloaded (${(d.bytes / 1024).toFixed(1)} KB).` }),
     onSuccess: (_data, res) => saveBlob(res.blob, 'skyline-semester-ledger.csv'),
     refresh: () => null, // a download changes nothing on the server
   }),
@@ -1886,19 +2010,61 @@ const FORMS = {
   login: () => signIn('form:login', state.forms.login.email, state.forms.login.password),
   register: () => {
     const f = state.forms.register;
+    if (f.password !== f.confirm) {
+      state.ui.authError = 'The two passwords don’t match.';
+      return renderMain();
+    }
     return mutate('form:register', 'POST', '/api/auth/register', { name: f.name, email: f.email, password: f.password }, {
-      onSuccess: (d) => {
-        setSession(d.token, d.user);
-        state.data = blankData();
-        state.ui.authMode = null;
-        state.ui.authError = null;
-        state.forms.register = blankForms().register;
-      },
+      onSuccess: startSession,
       onError: (res) => {
         state.ui.authError = errorText(res);
       },
-      success: (d) => `Account created for ${d.user.name}. Welcome to Skyline!`,
+      success: (d) => ({ title: 'Account Created', message: `Welcome to Skyline, ${firstName(d.user.name)}! Join the club from your dashboard to unlock member prices.` }),
       refresh: () => LOADERS[state.activeTab]?.(),
+    });
+  },
+  forgotPassword: () => {
+    const f = state.forms.forgotPassword;
+    return mutate('form:forgotPassword', 'POST', '/api/auth/forgot-password', { ...f }, {
+      onSuccess: startSession,
+      onError: (res) => {
+        state.ui.authError = errorText(res);
+      },
+      success: (d) => ({ title: 'Password Updated', message: `You're signed in as ${d.user.name}. Use your new password next time.` }),
+      refresh: () => LOADERS[state.activeTab]?.(),
+    });
+  },
+  forgotEmail: () => mutate('form:forgotEmail', 'POST', '/api/auth/forgot-email', { query: state.forms.forgotEmail.query }, {
+    onSuccess: (d) => {
+      state.ui.recoveredAccount = d.account;
+      state.ui.authError = null;
+    },
+    onError: (res) => {
+      state.ui.recoveredAccount = null;
+      state.ui.authError = errorText(res);
+    },
+    success: (d) => ({ title: 'Account Found', message: `${d.account.name} signs in with ${d.account.email}.` }),
+    refresh: () => null,
+  }),
+  profileName: () => mutate('form:profileName', 'PATCH', '/api/auth/profile', { name: state.forms.profile.name }, {
+    success: (d) => ({ title: 'Profile Updated', message: `Your name is now ${d.user.name}.` }),
+    refresh: async () => {
+      await refreshSession();
+      state.forms.profile.name = state.user.name;
+    },
+  }),
+  profilePassword: () => {
+    const f = state.forms.password;
+    if (f.next !== f.confirm) {
+      infoToast('The new password and its confirmation don’t match.', 'Check Your Password');
+      return null;
+    }
+    return mutate('form:profilePassword', 'PATCH', '/api/auth/profile', { current_password: f.current, new_password: f.next }, {
+      success: { title: 'Password Changed', message: 'Use your new password the next time you sign in.' },
+      onSuccess: () => {
+        state.forms.password = blankForms().password;
+      },
+      refresh: () => null,
     });
   },
   checkin: () => checkIn(state.forms.checkin.code, 'form:checkin'),
@@ -2016,7 +2182,9 @@ document.addEventListener('submit', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && (state.ui.authMode || state.ui.proofOpen)) ACTIONS.closeModal();
+  if (event.key !== 'Escape') return;
+  if (state.ui.proofOpen) ACTIONS.closeModal();
+  else if (state.ui.navOpen) ACTIONS.closeNav();
 });
 
 // ============================================================================ routing + boot
@@ -2030,6 +2198,7 @@ window.addEventListener('hashchange', () => {
   const tab = tabFromHash();
   if (tab === state.activeTab) return;
   state.activeTab = tab;
+  state.ui.navOpen = false;
   render();
   window.scrollTo(0, 0);
   loadTab(tab);
@@ -2048,14 +2217,8 @@ async function boot() {
   if (state.token && !state.user) clearSession();
   state.booting = false;
 
-  // ?persona=rohan deep-links straight into a demo persona.
-  const persona = new URLSearchParams(location.search).get('persona');
-  const account = persona && state.demo.accounts.find((a) => a.email.split('@')[0] === persona.toLowerCase());
-  if (account && state.user?.email !== account.email) {
-    await switchPersona(account.email);
-  } else {
-    await loadTab();
-  }
+  if (state.user) await loadTab();
+  else render();
 }
 
 boot();

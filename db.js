@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
   name                  TEXT NOT NULL,
   email                 TEXT UNIQUE NOT NULL,
   password_hash         TEXT NOT NULL,
-  role                  TEXT NOT NULL CHECK (role IN ('STUDENT', 'VOLUNTEER', 'ADMIN')),
+  role                  TEXT NOT NULL CHECK (role IN ('STUDENT', 'VOLUNTEER', 'TREASURER', 'ADMIN')),
   membership_code       TEXT UNIQUE,
   membership_status     TEXT NOT NULL DEFAULT 'NONE' CHECK (membership_status IN ('NONE', 'ACTIVE', 'EXPIRED')),
   membership_expires_at TEXT,
@@ -296,9 +296,36 @@ function addMissingColumns(conn) {
   }
 }
 
-// Idempotent: creates missing tables and indexes, drops retired indexes, adds
-// missing columns. All of it commits together or not at all.
+const USERS_TABLE_SQL = SCHEMA.match(/CREATE TABLE IF NOT EXISTS users \([\s\S]*?\n\);/)[0];
+
+// SQLite can't edit a CHECK constraint in place, so a users table created
+// before the TREASURER role existed is rebuilt: copy every row into a table
+// with the current definition, swap it in, and confirm that every foreign key
+// in the database still resolves. Foreign keys are paused only for the swap,
+// so dropping the old table doesn't cascade into tickets, orders or the ledger.
+function upgradeUserRoles(conn) {
+  const row = conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+  if (!row || row.sql.includes("'TREASURER'")) return;
+  const columns = conn.prepare('PRAGMA table_info(users)').all().map((c) => c.name).join(', ');
+  conn.exec('PRAGMA foreign_keys = OFF');
+  try {
+    withTransaction(() => {
+      conn.exec(USERS_TABLE_SQL.replace('CREATE TABLE IF NOT EXISTS users', 'CREATE TABLE users_new'));
+      conn.exec(`INSERT INTO users_new (${columns}) SELECT ${columns} FROM users`);
+      conn.exec('DROP TABLE users');
+      conn.exec('ALTER TABLE users_new RENAME TO users');
+      const broken = conn.prepare('PRAGMA foreign_key_check').all();
+      if (broken.length) throw new Error(`users role migration would break ${broken.length} foreign key(s)`);
+    }, conn);
+  } finally {
+    conn.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+// Idempotent: upgrades an old users table, creates missing tables and
+// indexes, drops retired indexes, adds missing columns.
 function applySchema(conn) {
+  upgradeUserRoles(conn);
   withTransaction(() => {
     conn.exec(SCHEMA);
     addMissingColumns(conn);

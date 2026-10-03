@@ -8,7 +8,7 @@ const { requireAuth, optionalAuth, requireRole } = require('../middleware/requir
 
 const CATEGORIES = ['MEETING', 'DEADLINE', 'EVENT', 'GENERAL'];
 const AUDIENCES = ['ALL', 'MEMBERS_ONLY'];
-const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
+const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const MAX_TITLE = 150;
 const MAX_CONTENT = 5000;
 
@@ -80,7 +80,7 @@ router.get('/', optionalAuth, (req, res) => {
   });
 });
 
-router.post('/', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.post('/', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const body = req.body || {};
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const content = typeof body.content === 'string' ? body.content.trim() : '';

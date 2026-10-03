@@ -13,7 +13,7 @@ const { requireAuth, optionalAuth, requireRole } = require('../middleware/requir
 const SIZES = ['S', 'M', 'L', 'XL'];
 const MAX_QUANTITY = 5;
 const FULFILLMENT_STATUSES = ['PAID_PENDING_PICKUP', 'PICKED_UP'];
-const STAFF_ROLES = new Set(['VOLUNTEER', 'ADMIN']);
+const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const ORDER_CODE_RE = /^[A-Z0-9-]{4,40}$/;
 
 const router = express.Router();
@@ -258,7 +258,7 @@ router.get('/orders', requireAuth, (req, res) => {
   res.json({ filters: { status, q }, summary, count: orders.length, orders });
 });
 
-router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'ADMIN'), (req, res) => {
+router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
   const code = req.params.code.trim().toUpperCase();
   if (!ORDER_CODE_RE.test(code)) throw validationFailed({ code: 'Order code must be 4-40 letters, digits or dashes' });
 

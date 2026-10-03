@@ -44,6 +44,7 @@ async function run() {
   const { api } = server;
   const login = async (email) => (await api('POST', '/api/auth/login', { body: { email, password: 'skyline123' } })).body.token;
   const admin = await login('vikram@skyline.edu');
+  const treasurer = await login('meera@skyline.edu');
   const volunteer = await login('neha@skyline.edu');
   const student = await login('kabir@skyline.edu');
 
@@ -89,12 +90,13 @@ async function run() {
   const outRow = dataRows.find((r) => r[2] === 'OUT');
   check('OUT rows export as negative numbers (not text-prefixed)', outRow && Number(outRow[4]) < 0 && !outRow[4].startsWith("'"), outRow?.[4]);
 
+  const csvTreasurer = await fetchRaw('/api/finance/ledger/export.csv', treasurer);
   const csvVolunteer = await fetchRaw('/api/finance/ledger/export.csv', volunteer);
   const csvStudent = await fetchRaw('/api/finance/ledger/export.csv', student);
   const csvAnon = await fetchRaw('/api/finance/ledger/export.csv');
-  check('volunteer -> 200; student -> 403; no token -> 401',
-    csvVolunteer.status === 200 && csvStudent.status === 403 && csvAnon.status === 401,
-    `${csvVolunteer.status}/${csvStudent.status}/${csvAnon.status}`);
+  check('treasurer -> 200; volunteer -> 403; student -> 403; no token -> 401',
+    csvTreasurer.status === 200 && csvVolunteer.status === 403 && csvStudent.status === 403 && csvAnon.status === 401,
+    `${csvTreasurer.status}/${csvVolunteer.status}/${csvStudent.status}/${csvAnon.status}`);
 
   // ------------------------------------------------------------ System proof
   section('Live DB & index proof');
@@ -193,10 +195,123 @@ async function run() {
 
   const volunteerForbidden = [
     ['POST', '/api/events', {}], ['PATCH', '/api/finance/reimbursements/1/review', { decision: 'REJECTED' }],
-    ['POST', '/api/finance/fundraiser-income', {}],
+    ['POST', '/api/finance/fundraiser-income', {}], ['GET', '/api/finance/ledger/export.csv'],
   ];
   const asVolunteer = await Promise.all(volunteerForbidden.map(([m, r, b]) => api(m, r, { token: volunteer, body: b })));
   check('volunteer role -> 403 on admin-only routes', asVolunteer.every((r) => r.status === 403), asVolunteer.map((r) => r.status).join(','));
+
+  // ------------------------------------------------------------ Roles
+  section('Role separation: ADMIN · TREASURER · VOLUNTEER · STUDENT');
+  const me = await api('GET', '/api/auth/me', { token: treasurer });
+  check('Meera is seeded as TREASURER with an active membership (SKY-2026-002)',
+    me.body.user.role === 'TREASURER' && me.body.user.membership.code === 'SKY-2026-002' && me.body.user.membership.status === 'ACTIVE');
+  const treasurerReads = await Promise.all([
+    api('GET', '/api/memberships/lookup?q=rohan', { token: treasurer }),
+    api('GET', '/api/tasks', { token: treasurer }),
+    api('GET', '/api/finance/ledger', { token: treasurer }),
+    api('GET', '/api/announcements', { token: treasurer }),
+    api('GET', '/api/system/proof', { token: treasurer }),
+  ]);
+  check('treasurer has staff read access: lookup, tasks, ledger, proof, and members-only announcements',
+    treasurerReads.every((r) => r.status === 200) && treasurerReads[3].body.viewer.can_view_members_only === true &&
+      treasurerReads[3].body.hidden_members_only_count === 0);
+  const treasurerEvent = await api('POST', '/api/events', {
+    token: treasurer,
+    body: { title: 'Treasurer Mixer', event_date: new Date(Date.now() + 864e5 * 9).toISOString(), location: 'Hall', total_seats: 10, member_price: 0, guest_price: 0 },
+  });
+  check('creating events is ADMIN only: treasurer -> 403', treasurerEvent.status === 403, treasurerEvent.body?.reason);
+  const income = await api('POST', '/api/finance/fundraiser-income', { token: treasurer, body: { amount: 50, description: 'Raffle', reference_id: 'RAFFLE-1' } });
+  const incomeAdmin = await api('POST', '/api/finance/fundraiser-income', { token: admin, body: { amount: 50, description: 'Raffle 2', reference_id: 'RAFFLE-2' } });
+  check('fundraiser income: treasurer -> 201 and admin -> 201', income.status === 201 && incomeAdmin.status === 201);
+  const claim = await api('POST', '/api/finance/reimbursements', {
+    token: volunteer,
+    body: { title: 'Napkins', category: 'FUNDRAISER_SUPPLIES', amount: 90, receipt_reference: 'NAP-1' },
+  });
+  const volunteerReview = await api('PATCH', `/api/finance/reimbursements/${claim.body.reimbursement.id}/review`, { token: volunteer, body: { decision: 'REJECTED' } });
+  const treasurerReview = await api('PATCH', `/api/finance/reimbursements/${claim.body.reimbursement.id}/review`, { token: treasurer, body: { decision: 'REJECTED' } });
+  check('reviewing claims: volunteer -> 403 (requires TREASURER or ADMIN); treasurer -> 200',
+    volunteerReview.status === 403 && volunteerReview.body.reason === 'requires role: TREASURER or ADMIN' && treasurerReview.status === 200);
+
+  // ------------------------------------------------------------ Auth recovery + profile
+  section('Account recovery & profile');
+  const byCode = await api('POST', '/api/auth/forgot-email', { body: { query: 'sky-2026-004' } });
+  const byName = await api('POST', '/api/auth/forgot-email', { body: { query: '  ROHAN verma ' } });
+  check('forgot-email finds Rohan by membership code or full name (any case)',
+    byCode.status === 200 && byCode.body.account.email === 'rohan@skyline.edu' && byCode.body.account.membership_code === 'SKY-2026-004' &&
+      byName.status === 200 && byName.body.account.email === 'rohan@skyline.edu' && /^ro•+@skyline\.edu$/.test(byName.body.account.masked_email),
+    `${byCode.body?.account?.email} · ${byName.body?.account?.masked_email}`);
+  const noMatch = await api('POST', '/api/auth/forgot-email', { body: { query: 'Nobody Here' } });
+  const emptyQuery = await api('POST', '/api/auth/forgot-email', { body: { query: '   ' } });
+  check('forgot-email: unknown -> 404; empty -> 400', noMatch.status === 404 && emptyQuery.status === 400);
+
+  const wrongProof = await api('POST', '/api/auth/forgot-password', { body: { email: 'rohan@skyline.edu', verification: 'SKY-2026-001', new_password: 'newpass1' } });
+  const unknownEmail = await api('POST', '/api/auth/forgot-password', { body: { email: 'ghost@skyline.edu', verification: 'Ghost', new_password: 'newpass1' } });
+  const badReset = await api('POST', '/api/auth/forgot-password', { body: { email: 'not-an-email', verification: '', new_password: '123' } });
+  check('forgot-password: wrong verification and unknown email -> same 401; invalid input -> 400 with 3 field errors',
+    wrongProof.status === 401 && unknownEmail.status === 401 && wrongProof.body.error === unknownEmail.body.error &&
+      badReset.status === 400 && ['email', 'verification', 'new_password'].every((f) => f in badReset.body.details));
+  const reset = await api('POST', '/api/auth/forgot-password', { body: { email: 'ROHAN@skyline.edu', verification: 'sky-2026-004', new_password: 'gala-2026' } });
+  const oldLogin = await api('POST', '/api/auth/login', { body: { email: 'rohan@skyline.edu', password: 'skyline123' } });
+  const newLogin = await api('POST', '/api/auth/login', { body: { email: 'rohan@skyline.edu', password: 'gala-2026' } });
+  const stored = db.prepare('SELECT password_hash FROM users WHERE email = ?').get('rohan@skyline.edu').password_hash;
+  check('forgot-password with the membership code -> 200 + token; old password now 401, new password 200',
+    reset.status === 200 && typeof reset.body.token === 'string' && reset.body.user.email === 'rohan@skyline.edu' &&
+      oldLogin.status === 401 && newLogin.status === 200 && /^[0-9a-f]{32}:[0-9a-f]{128}$/.test(stored));
+  const resetByName = await api('POST', '/api/auth/forgot-password', { body: { email: 'kabir@skyline.edu', verification: 'kabir singh', new_password: 'kabir-pass' } });
+  check('forgot-password also verifies by full name (case-insensitive)', resetByName.status === 200);
+
+  const rohan = newLogin.body.token;
+  const rename = await api('PATCH', '/api/auth/profile', { token: rohan, body: { name: 'Rohan K. Verma' } });
+  const wrongCurrent = await api('PATCH', '/api/auth/profile', { token: rohan, body: { current_password: 'nope', new_password: 'another-1' } });
+  const changePw = await api('PATCH', '/api/auth/profile', { token: rohan, body: { current_password: 'gala-2026', new_password: 'another-1' } });
+  const afterChange = await api('POST', '/api/auth/login', { body: { email: 'rohan@skyline.edu', password: 'another-1' } });
+  check('profile: rename -> 200; wrong current password -> 403; correct one -> 200 and the new password works',
+    rename.status === 200 && rename.body.user.name === 'Rohan K. Verma' && wrongCurrent.status === 403 &&
+      changePw.status === 200 && afterChange.status === 200,
+    `${rename.status}/${wrongCurrent.status}/${changePw.status}/${afterChange.status}`);
+  const emptyPatch = await api('PATCH', '/api/auth/profile', { token: rohan, body: {} });
+  const shortName = await api('PATCH', '/api/auth/profile', { token: rohan, body: { name: 'R' } });
+  const anonPatch = await api('PATCH', '/api/auth/profile', { body: { name: 'Hacker' } });
+  check('profile: empty or invalid -> 400; no token -> 401', emptyPatch.status === 400 && shortName.status === 400 && anonPatch.status === 401);
+
+  // ------------------------------------------------------------ Migration
+  section('Schema migration: adding TREASURER to an existing users table');
+  const { connect, applySchema } = require('./db');
+  const fixtureFile = `${DB_FILE}-roles`;
+  const fixture = connect(fixtureFile);
+  try {
+    fixture.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('STUDENT', 'VOLUNTEER', 'ADMIN')),
+        membership_code TEXT UNIQUE, membership_status TEXT NOT NULL DEFAULT 'NONE' CHECK (membership_status IN ('NONE', 'ACTIVE', 'EXPIRED')),
+        membership_expires_at TEXT, created_at TEXT NOT NULL);
+      CREATE TABLE announcements (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, content TEXT NOT NULL,
+        category TEXT NOT NULL, target_audience TEXT NOT NULL DEFAULT 'ALL', author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL);
+      INSERT INTO users (name, email, password_hash, role, created_at) VALUES ('Old Admin', 'old@x.edu', 'a:b', 'ADMIN', 'x');
+      INSERT INTO announcements (title, content, category, author_id, created_at) VALUES ('Hi', 'Hello', 'GENERAL', 1, 'x');`);
+    let before = null;
+    try {
+      fixture.prepare("INSERT INTO users (name, email, password_hash, role, created_at) VALUES ('T', 't@x.edu', 'a:b', 'TREASURER', 'x')").run();
+    } catch (err) {
+      before = err.message;
+    }
+    applySchema(fixture);
+    fixture.prepare("INSERT INTO users (name, email, password_hash, role, created_at) VALUES ('T', 't@x.edu', 'a:b', 'TREASURER', 'x')").run();
+    const kept = fixture.prepare('SELECT COUNT(*) AS n FROM announcements WHERE author_id = 1').get().n;
+    const fk = fixture.prepare('PRAGMA foreign_keys').get().foreign_keys;
+    let bad = null;
+    try {
+      fixture.prepare("INSERT INTO users (name, email, password_hash, role, created_at) VALUES ('K', 'k@x.edu', 'a:b', 'KING', 'x')").run();
+    } catch (err) {
+      bad = err.message;
+    }
+    check('old table rejected TREASURER; after startup migration it is accepted, rows and foreign keys intact',
+      /CHECK constraint failed/.test(before || '') && kept === 1 && fk === 1 && /CHECK constraint failed/.test(bad || '') &&
+        fixture.prepare('PRAGMA foreign_key_check').all().length === 0);
+  } finally {
+    fixture.close();
+    removeDb(fixtureFile);
+  }
 
   const unknown = await api('GET', '/api/does/not/exist', { token: admin });
   check('unknown API path -> JSON 404', unknown.status === 404 && unknown.body?.error === 'Not found');

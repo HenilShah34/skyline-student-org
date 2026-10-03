@@ -10,9 +10,10 @@ const DEMO_PASSWORD = 'skyline123';
 // Rohan paid 355 days ago, so his membership expires in 10 days and the
 // renewal reminder shows up on first login.
 const DEMO_ACCOUNTS = [
-  { key: 'vikram', name: 'Vikram Desai', email: 'vikram@skyline.edu', role: 'ADMIN', persona: 'Admin / Treasurer', membershipCode: 'SKY-2026-001', joinedDaysAgo: 400, duesPaidDaysAgo: 60 },
-  { key: 'neha', name: 'Neha Sharma', email: 'neha@skyline.edu', role: 'VOLUNTEER', persona: 'Volunteer Lead', membershipCode: 'SKY-2026-002', joinedDaysAgo: 380, duesPaidDaysAgo: 58 },
-  { key: 'rohan', name: 'Rohan Verma', email: 'rohan@skyline.edu', role: 'STUDENT', persona: 'Active Member (renewal due in 10 days)', membershipCode: 'SKY-2026-003', joinedDaysAgo: 360, duesPaidDaysAgo: 355 },
+  { key: 'vikram', name: 'Vikram Desai', email: 'vikram@skyline.edu', role: 'ADMIN', persona: 'Club President / Admin', membershipCode: 'SKY-2026-001', joinedDaysAgo: 400, duesPaidDaysAgo: 60 },
+  { key: 'meera', name: 'Meera Joshi', email: 'meera@skyline.edu', role: 'TREASURER', persona: 'Club Treasurer', membershipCode: 'SKY-2026-002', joinedDaysAgo: 390, duesPaidDaysAgo: 62 },
+  { key: 'neha', name: 'Neha Sharma', email: 'neha@skyline.edu', role: 'VOLUNTEER', persona: 'Volunteer Lead', membershipCode: 'SKY-2026-003', joinedDaysAgo: 380, duesPaidDaysAgo: 58 },
+  { key: 'rohan', name: 'Rohan Verma', email: 'rohan@skyline.edu', role: 'STUDENT', persona: 'Active Member (renewal due in 10 days)', membershipCode: 'SKY-2026-004', joinedDaysAgo: 360, duesPaidDaysAgo: 355 },
   { key: 'kabir', name: 'Kabir Singh', email: 'kabir@skyline.edu', role: 'STUDENT', persona: 'Non-member Student', membershipCode: null, joinedDaysAgo: 5, duesPaidDaysAgo: null },
 ];
 
@@ -227,7 +228,7 @@ function insertSeedData(passwordHashes) {
     receipt: 'RCPT-2026-0917',
   };
   insertExpense.run(
-    users.neha.id, paidExpense.title, paidExpense.category, paidExpense.amount, paidExpense.receipt, 'APPROVED_PAID', users.vikram.id, daysAgo(10),
+    users.neha.id, paidExpense.title, paidExpense.category, paidExpense.amount, paidExpense.receipt, 'APPROVED_PAID', users.meera.id, daysAgo(10),
   );
   insertLedger.run(
     'OUT', 'EXPENSE_REIMBURSEMENT', paidExpense.amount,
