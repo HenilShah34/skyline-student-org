@@ -1,0 +1,19 @@
+{
+  "name": "skyline-student-org",
+  "version": "1.0.0",
+  "description": "Skyline Student Association ERP - Odoo x LDCE Hackathon 2026",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js",
+    "verify": "node verify-phase1.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1"
+  }
+}
