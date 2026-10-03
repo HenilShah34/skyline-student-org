@@ -1,7 +1,8 @@
 'use strict';
 
-// Phase 6 self-verification: ledger CSV export, the live DB/index proof
-// endpoint, and a security and edge-case sweep across every route. Runs the
+// Phase 6 self-verification: ledger CSV export, the live DB/index proof,
+// role separation, the Founding Admin hierarchy, the task workflow, the
+// semester-at-a-glance numbers, and a security and edge-case sweep. Runs the
 // real server against a throwaway database on an ephemeral port.
 
 const { check, section, summarize, tempDbPath, removeDb, startServer, stopServer } = require('./verify-helpers');
@@ -169,6 +170,7 @@ async function run() {
     ['GET', '/api/finance/reimbursements'], ['POST', '/api/finance/reimbursements'],
     ['PATCH', '/api/finance/reimbursements/1/review'], ['GET', '/api/finance/ledger'],
     ['GET', '/api/finance/ledger/export.csv'], ['POST', '/api/finance/fundraiser-income'], ['GET', '/api/system/proof'],
+    ['DELETE', '/api/tasks/1'], ['GET', '/api/users'], ['PATCH', '/api/users/2/role'],
   ];
   const noAuth = await Promise.all(protectedRoutes.map(([m, r]) => api(m, r, { body: m === 'GET' ? undefined : {} })));
   check(`missing token -> 401 on all ${protectedRoutes.length} protected routes`, noAuth.every((r) => r.status === 401),
@@ -186,8 +188,9 @@ async function run() {
     ['POST', '/api/events', {}], ['POST', '/api/announcements', {}], ['GET', '/api/memberships/lookup'],
     ['PATCH', '/api/merch/orders/ORD-2026-0002/pickup'], ['POST', '/api/tasks', { title: 'x' }], ['GET', '/api/tasks/assignees'],
     ['POST', '/api/finance/reimbursements', {}], ['PATCH', '/api/finance/reimbursements/1/review', { decision: 'REJECTED' }],
-    ['GET', '/api/finance/ledger'], ['GET', '/api/finance/ledger/export.csv'], ['POST', '/api/finance/fundraiser-income', {}],
-    ['GET', '/api/system/proof'], ['POST', '/api/tickets/TKT-GALA26-0001/check-in'],
+    ['GET', '/api/finance/ledger/export.csv'], ['POST', '/api/finance/fundraiser-income', {}],
+    ['GET', '/api/system/proof'], ['POST', '/api/tickets/TKT-GALA26-0001/check-in'], ['DELETE', '/api/tasks/1'],
+    ['GET', '/api/users'], ['PATCH', '/api/users/3/role', { role: 'STUDENT' }],
   ];
   const asStudent = await Promise.all(studentForbidden.map(([m, r, b]) => api(m, r, { token: student, body: b })));
   check(`student role -> 403 on all ${studentForbidden.length} staff/admin routes`, asStudent.every((r) => r.status === 403),
@@ -195,7 +198,8 @@ async function run() {
 
   const volunteerForbidden = [
     ['POST', '/api/events', {}], ['PATCH', '/api/finance/reimbursements/1/review', { decision: 'REJECTED' }],
-    ['POST', '/api/finance/fundraiser-income', {}], ['GET', '/api/finance/ledger/export.csv'],
+    ['POST', '/api/finance/fundraiser-income', {}], ['GET', '/api/finance/ledger/export.csv'], ['DELETE', '/api/tasks/1'],
+    ['GET', '/api/users'], ['PATCH', '/api/users/4/role', { role: 'VOLUNTEER' }],
   ];
   const asVolunteer = await Promise.all(volunteerForbidden.map(([m, r, b]) => api(m, r, { token: volunteer, body: b })));
   check('volunteer role -> 403 on admin-only routes', asVolunteer.every((r) => r.status === 403), asVolunteer.map((r) => r.status).join(','));
@@ -273,6 +277,132 @@ async function run() {
   const shortName = await api('PATCH', '/api/auth/profile', { token: rohan, body: { name: 'R' } });
   const anonPatch = await api('PATCH', '/api/auth/profile', { body: { name: 'Hacker' } });
   check('profile: empty or invalid -> 400; no token -> 401', emptyPatch.status === 400 && shortName.status === 400 && anonPatch.status === 401);
+
+  // ------------------------------------------------------------ Semester at a glance
+  section('Semester money at a glance (any signed-in member)');
+  const glance = await api('GET', '/api/finance/ledger', { token: student });
+  const story = glance.body?.semester_story;
+  const pendingDb = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS amount FROM expense_reimbursements WHERE status = 'PENDING'").get();
+  const sumIn = story && story.dues_collected.amount + story.tickets_sold.amount + story.merch_sold.amount + story.fundraiser_income.amount;
+  check('a student reads the ledger -> 200 with semester_story: the four income lines add up to what came in',
+    glance.status === 200 && sumIn === story.came_in && story.came_in === glance.body.summary.total_in &&
+      story.expenses_reimbursed.amount === story.went_out && story.came_in - story.went_out === story.left,
+    story && `in ${story.came_in} − out ${story.went_out} = left ${story.left}`);
+  const countOf = (c) => db.prepare('SELECT COUNT(*) AS n FROM ledger_transactions WHERE category = ?').get(c).n;
+  check('semester_story counts match the ledger rows, with pending claims reported separately',
+    story.dues_collected.count === countOf('MEMBERSHIP_DUES') && story.tickets_sold.count === countOf('TICKET_SALE') &&
+      story.merch_sold.count === countOf('MERCH_SALE') && story.expenses_reimbursed.count === countOf('EXPENSE_REIMBURSEMENT') &&
+      story.expenses_reimbursed.pending_count === pendingDb.n && story.expenses_reimbursed.pending_amount === pendingDb.amount,
+    JSON.stringify(story.expenses_reimbursed));
+  const combo = await api('GET', '/api/finance/ledger?category=merch_sale,FUNDRAISER_INCOME', { token: student });
+  const badCombo = await api('GET', '/api/finance/ledger?category=MERCH_SALE,PIZZA', { token: student });
+  check('?category= takes a comma list (merch + fundraisers); an unknown category in the list -> 400',
+    combo.status === 200 && combo.body.count === countOf('MERCH_SALE') + countOf('FUNDRAISER_INCOME') &&
+      combo.body.transactions.every((t) => ['MERCH_SALE', 'FUNDRAISER_INCOME'].includes(t.category)) &&
+      combo.body.filters.category === 'MERCH_SALE,FUNDRAISER_INCOME' && badCombo.status === 400);
+  const studentWrites = await Promise.all([
+    fetchRaw('/api/finance/ledger/export.csv', student).then((r) => r.status),
+    api('POST', '/api/finance/fundraiser-income', { token: student, body: { amount: 5, description: 'x' } }).then((r) => r.status),
+  ]);
+  check('reading is open, but export and income stay Treasurer/Admin: student -> 403', studentWrites.every((s) => s === 403));
+
+  // ------------------------------------------------------------ Task workflow
+  section('Bake-sale tasks: moves in every direction, unassigned guard, admin delete');
+  const users = Object.fromEntries(db.prepare('SELECT id, email FROM users').all().map((u) => [u.email.split('@')[0], u.id]));
+  const move = (id, body, token = volunteer) => api('PATCH', `/api/tasks/${id}/status`, { token, body });
+  const openTask = db.prepare("SELECT id FROM fundraiser_tasks WHERE assigned_to IS NULL AND status = 'TODO' ORDER BY id LIMIT 1").get();
+  const startUnassigned = await move(openTask.id, { status: 'IN_PROGRESS' });
+  const finishUnassigned = await move(openTask.id, { status: 'DONE' });
+  check('starting or finishing an unassigned task -> 409 with a clear message; it stays in To do',
+    startUnassigned.status === 409 && finishUnassigned.status === 409 &&
+      startUnassigned.body.error === 'Please assign a volunteer or member to this task before starting or completing it' &&
+      db.prepare('SELECT status FROM fundraiser_tasks WHERE id = ?').get(openTask.id).status === 'TODO',
+    startUnassigned.body?.error);
+  const assignOnly = await move(openTask.id, { assigned_to: users.neha });
+  const started = await move(openTask.id, { status: 'IN_PROGRESS' });
+  check('inline assign (assigned_to only, no status) -> 200 still To do; then Start -> 200 In progress',
+    assignOnly.status === 200 && assignOnly.body.task.status === 'TODO' && assignOnly.body.task.assignee_name === 'Neha Sharma' &&
+      started.status === 200 && started.body.task.status === 'IN_PROGRESS');
+  const back = await move(openTask.id, { status: 'TODO' });
+  check('IN_PROGRESS -> TODO (move back to To do) -> 200', back.status === 200 && back.body.task.status === 'TODO');
+  const path = [];
+  for (const status of ['IN_PROGRESS', 'DONE', 'IN_PROGRESS', 'TODO']) {
+    const r = await move(openTask.id, { status });
+    path.push(`${r.status}:${r.body?.task?.status}`);
+  }
+  check('TODO -> IN_PROGRESS -> DONE -> IN_PROGRESS -> TODO: every step 200', path.join(' ') === '200:IN_PROGRESS 200:DONE 200:IN_PROGRESS 200:TODO', path.join(' '));
+  const reassignAndStart = await move(openTask.id, { assigned_to: users.rohan, status: 'IN_PROGRESS' });
+  const unassignInProgress = await move(openTask.id, { assigned_to: null });
+  const unassignToTodo = await move(openTask.id, { assigned_to: null, status: 'TODO' });
+  const emptyMove = await move(openTask.id, {});
+  check('reassign + start together -> 200; unassigning an in-progress task -> 409; unassign + back to To do -> 200; empty body -> 400',
+    reassignAndStart.status === 200 && reassignAndStart.body.task.assignee_name === 'Rohan K. Verma' &&
+      unassignInProgress.status === 409 && unassignToTodo.status === 200 && unassignToTodo.body.task.assigned_to === null &&
+      emptyMove.status === 400,
+    `${reassignAndStart.status}/${unassignInProgress.status}/${unassignToTodo.status}/${emptyMove.status}`);
+
+  const doomed = db.prepare('SELECT id, campaign_name FROM fundraiser_tasks ORDER BY id DESC LIMIT 1').get();
+  const tasksBefore = db.prepare('SELECT COUNT(*) AS n FROM fundraiser_tasks WHERE campaign_name = ?').get(doomed.campaign_name).n;
+  const nonAdminDeletes = await Promise.all([volunteer, treasurer, student].map((token) => api('DELETE', `/api/tasks/${doomed.id}`, { token })));
+  check('DELETE /api/tasks/:id by volunteer, treasurer or student -> 403; the task is untouched',
+    nonAdminDeletes.every((r) => r.status === 403) && db.prepare('SELECT 1 FROM fundraiser_tasks WHERE id = ?').get(doomed.id) !== undefined,
+    nonAdminDeletes.map((r) => r.status).join(','));
+  const removed = await api('DELETE', `/api/tasks/${doomed.id}`, { token: admin });
+  const removedAgain = await api('DELETE', `/api/tasks/${doomed.id}`, { token: admin });
+  const removedBadId = await api('DELETE', '/api/tasks/abc', { token: admin });
+  check('admin delete -> 200 with the updated campaigns_summary; again -> 404; bad id -> 400',
+    removed.status === 200 && removed.body.deleted.id === doomed.id &&
+      removed.body.campaigns_summary[doomed.campaign_name].total_tasks === tasksBefore - 1 &&
+      !db.prepare('SELECT 1 FROM fundraiser_tasks WHERE id = ?').get(doomed.id) &&
+      removedAgain.status === 404 && removedBadId.status === 400,
+    `${removed.status}/${removedAgain.status}/${removedBadId.status}`);
+
+  // ------------------------------------------------------------ Access control
+  section('Club access & roles: Founding Admin hierarchy');
+  const roster = await api('GET', '/api/users', { token: admin });
+  const nonAdminRoster = await Promise.all([treasurer, volunteer, student].map((token) => api('GET', '/api/users', { token })));
+  check('GET /api/users: admin -> 200 with role, live membership and is_founding_admin only on user 1; others -> 403',
+    roster.status === 200 && roster.body.users.length === db.prepare('SELECT COUNT(*) AS n FROM users').get().n &&
+      roster.body.users.filter((u) => u.is_founding_admin).map((u) => u.id).join() === '1' &&
+      roster.body.users.every((u) => u.role && u.membership_status && !('password_hash' in u)) &&
+      nonAdminRoster.every((r) => r.status === 403),
+    nonAdminRoster.map((r) => r.status).join(','));
+  const setRole = (id, role, token) => api('PATCH', `/api/users/${id}/role`, { token, body: { role } });
+  const promoteMeera = await setRole(users.meera, 'ADMIN', admin);
+  check('Founding Admin promotes Meera (Treasurer) to a second ADMIN -> 200',
+    promoteMeera.status === 200 && promoteMeera.body.user.role === 'ADMIN' && promoteMeera.body.previous_role === 'TREASURER');
+  const meeraRoster = await api('GET', '/api/users', { token: treasurer });
+  check("the role is read live: Meera's existing token now opens the admin-only roster", meeraRoster.status === 200);
+
+  const kabirUp = await setRole(users.kabir, 'volunteer', treasurer);
+  const kabirStaffRead = await api('GET', '/api/tasks/assignees', { token: student });
+  check('second Admin promotes student Kabir to VOLUNTEER -> 200, and his old token gets staff access at once',
+    kabirUp.status === 200 && kabirUp.body.user.role === 'VOLUNTEER' && kabirStaffRead.status === 200);
+  const secondToAdmin = await setRole(users.rohan, 'ADMIN', treasurer);
+  check('second Admin trying to grant ADMIN -> 403 (only the Founding Admin can)',
+    secondToAdmin.status === 403 && secondToAdmin.body.reason ===
+      'Only the Founding Admin can grant or modify Admin access. You may assign Student, Volunteer, or Treasurer roles.' &&
+      db.prepare('SELECT role FROM users WHERE id = ?').get(users.rohan).role === 'STUDENT');
+  const promoteNeha = await setRole(users.neha, 'ADMIN', admin);
+  const secondEditsAdmin = await setRole(users.neha, 'STUDENT', treasurer);
+  const secondEditsFounder = await setRole(1, 'STUDENT', treasurer);
+  const secondEditsSelf = await setRole(users.meera, 'TREASURER', treasurer);
+  const founderEditsSelf = await setRole(1, 'STUDENT', admin);
+  check("second Admin can't change another Admin, the Founding Admin, or themselves -> 403 each; nor can the founder change their own role",
+    promoteNeha.status === 200 && secondEditsAdmin.status === 403 && /Only the Founding Admin/.test(secondEditsAdmin.body.reason) &&
+      secondEditsFounder.status === 403 && secondEditsFounder.body.reason === "The Founding Admin's role cannot be modified" &&
+      secondEditsSelf.status === 403 && secondEditsSelf.body.reason === 'You cannot change your own role' &&
+      founderEditsSelf.status === 403 && db.prepare('SELECT role FROM users WHERE id = 1').get().role === 'ADMIN',
+    `${secondEditsAdmin.status}/${secondEditsFounder.status}/${secondEditsSelf.status}/${founderEditsSelf.status}`);
+  const badRole = await setRole(users.rohan, 'KING', admin);
+  const ghostUser = await setRole(99999, 'STUDENT', admin);
+  const badUserId = await setRole('abc', 'STUDENT', admin);
+  check('invalid role or id -> 400; unknown user -> 404', badRole.status === 400 && badUserId.status === 400 && ghostUser.status === 404);
+  const kabirDown = await setRole(users.kabir, 'STUDENT', treasurer);
+  const kabirAfter = await api('GET', '/api/tasks/assignees', { token: student });
+  const nehaDown = await setRole(users.neha, 'VOLUNTEER', admin);
+  check('a demotion also applies at once: Kabir back to STUDENT -> his token is refused (403); founder returns Neha to VOLUNTEER',
+    kabirDown.status === 200 && kabirAfter.status === 403 && nehaDown.status === 200 && nehaDown.body.user.role === 'VOLUNTEER');
 
   // ------------------------------------------------------------ Migration
   section('Schema migration: adding TREASURER to an existing users table');

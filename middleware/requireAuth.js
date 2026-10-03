@@ -1,5 +1,6 @@
 'use strict';
 
+const { db } = require('../db');
 const { verify } = require('../lib/token');
 
 const BEARER_RE = /^Bearer\s+(\S+)\s*$/i;
@@ -19,9 +20,14 @@ function authenticate(req) {
   const result = verify(match[1]);
   if (!result.valid) return { reason: result.reason };
 
-  const { sub, role, email } = result.payload;
+  const { sub, role } = result.payload;
   if (!Number.isInteger(sub) || typeof role !== 'string') return { reason: 'malformed payload' };
-  return { user: { id: sub, role, email } };
+
+  // The role is read live from the users row, not trusted from the token, so a
+  // promotion or demotion by an admin takes effect on the very next request.
+  const current = db.prepare('SELECT role, email FROM users WHERE id = ?').get(sub);
+  if (!current) return { reason: 'user no longer exists' };
+  return { user: { id: sub, role: current.role, email: current.email } };
 }
 
 function requireAuth(req, res, next) {

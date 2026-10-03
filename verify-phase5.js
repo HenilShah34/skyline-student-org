@@ -54,7 +54,7 @@ async function run(server) {
     '/check-in', '/api/announcements', '/api/merch/orders', '/pickup', '/api/tasks', '/status',
     '/api/finance/reimbursements', '/review', '/api/finance/ledger', '/api/finance/fundraiser-income',
     '/api/auth/demo-accounts', '/api/events', '/api/auth/forgot-password', '/api/auth/forgot-email',
-    '/api/auth/profile', '/api/finance/ledger/export.csv'];
+    '/api/auth/profile', '/api/finance/ledger/export.csv', '/api/users', '/role', "'DELETE'"];
   const missing = wired.filter((needle) => !js.body.includes(needle));
   check('app.js is wired to every scene endpoint and sends the Bearer token', missing.length === 0, missing.join(', '));
 

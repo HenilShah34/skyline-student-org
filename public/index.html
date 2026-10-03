@@ -6,7 +6,7 @@
   <meta name="description" content="Skyline Student Association ERP: memberships, events, announcements, merch, fundraising and finance.">
   <meta name="color-scheme" content="light dark">
   <title>Skyline ERP · Student Association</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23714B67'/%3E%3Cpath d='M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a0729a'/%3E%3Cstop offset='.5' stop-color='%235b3f8c'/%3E%3Cstop offset='1' stop-color='%23312e81'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='46' height='46' rx='13' fill='url(%23b)'/%3E%3Cpath d='M10.5 29a13.5 13.5 0 0 1 27 0' fill='none' stroke='%23fbbf24' stroke-width='2.8' stroke-linecap='round'/%3E%3Cpath d='M24 10.6l1.3 3.1 3.1 1.3-3.1 1.3L24 19.4l-1.3-3.1-3.1-1.3 3.1-1.3z' fill='%23fbbf24'/%3E%3Cpath d='M11.5 37.5V30.5h4.4v7zM16.8 37.5V25.6l2.3-1.9 2.3 1.9v11.9zM22.2 37.5V23.2l1.8-3 1.8 3v14.3zM26.6 37.5V26.2h4.6v11.3zM32.1 37.5V31.2h4.4v6.3z' fill='%23fff'/%3E%3C/svg%3E">
   <script>
     // Apply the saved theme before the first paint, so dark mode never flashes white.
     try {
@@ -25,8 +25,33 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <a class="brand" href="#overview" aria-label="Skyline ERP home">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32"><path d="M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z" fill="currentColor"/></svg>
+      <span class="brand-mark brand-emblem" aria-hidden="true">
+        <svg class="brand-logo" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="tb-logo-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a0729a"/><stop offset="0.5" stop-color="#5b3f8c"/><stop offset="1" stop-color="#312e81"/></linearGradient>
+          <radialGradient id="tb-logo-glow" cx="0.5" cy="0.28" r="0.62"><stop offset="0" stop-color="#fff" stop-opacity="0.42"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+          <linearGradient id="tb-logo-gold" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fef3c7"/><stop offset="0.5" stop-color="#fbbf24"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+          <linearGradient id="tb-logo-city" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c7d2fe"/></linearGradient>
+        </defs>
+        <rect x="1.5" y="1.5" width="45" height="45" rx="13" fill="url(#tb-logo-bg)"/>
+        <rect x="1.5" y="1.5" width="45" height="45" rx="13" fill="url(#tb-logo-glow)"/>
+        <rect x="2.25" y="2.25" width="43.5" height="43.5" rx="12.25" fill="none" stroke="#fff" stroke-opacity="0.3" stroke-width="1.2"/>
+        <path d="M10.5 29a13.5 13.5 0 0 1 27 0" fill="none" stroke="url(#tb-logo-gold)" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M24 10.6l1.3 3.1 3.1 1.3-3.1 1.3L24 19.4l-1.3-3.1-3.1-1.3 3.1-1.3z" fill="url(#tb-logo-gold)"/>
+        <g fill="url(#tb-logo-city)">
+          <path d="M11.5 37.5V30.5h4.4v7z"/>
+          <path d="M16.8 37.5V25.6l2.3-1.9 2.3 1.9v11.9z"/>
+          <path d="M22.2 37.5V23.2l1.8-3 1.8 3v14.3z"/>
+          <path d="M26.6 37.5V26.2h4.6v11.3z"/>
+          <path d="M32.1 37.5V31.2h4.4v6.3z"/>
+        </g>
+        <g fill="#4c3a8a" fill-opacity="0.55">
+          <rect x="13" y="32.4" width="1.4" height="1.6" rx="0.3"/><rect x="18.4" y="27.6" width="1.4" height="1.6" rx="0.3"/><rect x="18.4" y="31.2" width="1.4" height="1.6" rx="0.3"/>
+          <rect x="23.3" y="26" width="1.4" height="1.8" rx="0.3"/><rect x="23.3" y="30" width="1.4" height="1.8" rx="0.3"/>
+          <rect x="28.2" y="28.4" width="1.4" height="1.6" rx="0.3"/><rect x="28.2" y="32" width="1.4" height="1.6" rx="0.3"/><rect x="33.6" y="33.2" width="1.4" height="1.6" rx="0.3"/>
+        </g>
+        <rect x="9.5" y="37.4" width="29" height="1.9" rx="0.95" fill="#fff" fill-opacity="0.9"/>
+  </svg>
       </span>
       <span class="brand-text"><strong>Skyline</strong><span>Student Association ERP</span></span>
     </a>

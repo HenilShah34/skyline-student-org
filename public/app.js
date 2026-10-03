@@ -59,11 +59,15 @@ const MEMBERSHIP_TONE = { ACTIVE: 'green', EXPIRED: 'red', NONE: 'slate' };
 const FULFILLMENT = { PAID_PENDING_PICKUP: ['Awaiting pickup', 'amber'], PICKED_UP: ['Picked up', 'green'] };
 const REIMBURSEMENT = { PENDING: ['Pending', 'amber'], APPROVED_PAID: ['Approved & paid', 'green'], REJECTED: ['Rejected', 'red'] };
 const TASK_STATUS = { TODO: ['To do', 'slate'], IN_PROGRESS: ['In progress', 'blue'], DONE: ['Done', 'green'] };
+// Every column can move a card either way, so a task started by mistake can go back.
 const TASK_MOVES = {
-  TODO: [['Start Task', 'IN_PROGRESS', 'primary']],
-  IN_PROGRESS: [['Mark Done', 'DONE', 'success']],
-  DONE: [['Reopen', 'TODO', 'secondary']],
+  TODO: [['Start Task →', 'IN_PROGRESS', 'primary']],
+  IN_PROGRESS: [['← Move to To Do', 'TODO', 'secondary'], ['Mark Done ✓', 'DONE', 'success']],
+  DONE: [['← Move to In Progress', 'IN_PROGRESS', 'secondary'], ['↺ Reopen to To Do', 'TODO', 'secondary']],
 };
+const TASK_TOAST = { TODO: 'Moved to To Do', IN_PROGRESS: 'Task In Progress', DONE: 'Task Completed' };
+const ROLES = ['STUDENT', 'VOLUNTEER', 'TREASURER', 'ADMIN'];
+const FOUNDING_ADMIN_ID = 1; // label only: the server enforces the hierarchy
 const ANNOUNCEMENT_CATEGORIES = ['MEETING', 'DEADLINE', 'EVENT', 'GENERAL'];
 const ANNOUNCEMENT_TONE = { MEETING: 'blue', DEADLINE: 'red', EVENT: 'plum', GENERAL: 'slate' };
 const LEDGER_CATEGORIES = ['MEMBERSHIP_DUES', 'TICKET_SALE', 'MERCH_SALE', 'FUNDRAISER_INCOME', 'EXPENSE_REIMBURSEMENT'];
@@ -98,6 +102,7 @@ function blankData() {
     assignees: null,
     reimbursements: null,
     ledger: null,
+    users: null,
   };
 }
 
@@ -145,6 +150,7 @@ const state = {
     reimbStatus: '',
     ledgerType: '',
     ledgerCategory: '',
+    roleDraft: {}, // user id -> role picked in the access table
     authView: 'signin', // signin | register | forgot-password | forgot-email
     authError: null,
     showPassword: false,
@@ -317,7 +323,9 @@ function actionFor({ method, path }) {
   if (path.includes('/check-in')) return 'check tickets in at the door';
   if (path.includes('/pickup')) return 'hand over merch orders';
   if (path.startsWith('/api/announcements')) return 'post announcements';
+  if (path.startsWith('/api/tasks') && method === 'DELETE') return 'delete fundraiser tasks';
   if (path.startsWith('/api/tasks')) return 'manage fundraiser tasks';
+  if (path.startsWith('/api/users')) return 'manage club access and roles';
   if (path.startsWith('/api/finance/reimbursements')) return 'submit expense claims';
   if (path.startsWith('/api/finance/ledger')) return 'view the club ledger';
   if (path.startsWith('/api/memberships/lookup')) return 'look up members';
@@ -335,6 +343,9 @@ function friendlyConflict(error, d) {
     return { title: 'Already Renewed', message: `Your membership is active until ${fmtDate(d.expires_at)}. Renewal opens on ${fmtDate(d.renewal_opens_at)}.` };
   }
   if (/sold out/i.test(error)) return { title: 'Sold Out', message: 'Every seat for this event has been taken.' };
+  if (/assign a volunteer or member/.test(error)) {
+    return { title: 'Assign Someone First', message: 'Pick a volunteer or member in the task’s “Assigned to” menu, then start or finish it.' };
+  }
   if (/already hold a ticket/.test(error)) return { title: 'Already Booked', message: `You already have ticket ${d.ticket_code} for this event.` };
   if (/already taken place/.test(error)) return { title: 'Event Has Ended', message: 'Tickets can only be bought for upcoming events.' };
   if (/already checked in/i.test(error)) {
@@ -370,6 +381,7 @@ function friendlyError(result) {
       if (/own reimbursement/.test(d.reason)) return { title: 'Separation of Duties', message: 'You can’t approve your own expense claim — another Treasurer or Admin must review it.' };
       if (/assigned to them/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Students can only move tasks that are assigned to them.' };
       if (/reassign/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Only volunteers, the Treasurer or the Admin can reassign tasks.' };
+      if (/Founding Admin|own role/.test(d.reason || '')) return { title: 'Access Change Not Allowed', message: /[.!]$/.test(d.reason) ? d.reason : `${d.reason}.` };
       const roles = /requires role: (.+)$/.exec(d.reason || '');
       if (roles) {
         const who = joinWords(roles[1].split(' or ').map((r) => WHO[r] || r));
@@ -596,7 +608,7 @@ async function loadReimbursements() {
 }
 
 async function loadLedger() {
-  if (!isStaff()) return;
+  if (!state.user) return;
   const params = new URLSearchParams();
   if (state.ui.ledgerType) params.set('type', state.ui.ledgerType);
   if (state.ui.ledgerCategory) params.set('category', state.ui.ledgerCategory);
@@ -606,15 +618,23 @@ async function loadLedger() {
   else toastIfError(res);
 }
 
+async function loadUsers() {
+  if (!isAdmin()) return;
+  const res = await api('GET', '/api/users');
+  if (!res.ok) return toastIfError(res);
+  state.data.users = res.data;
+  state.ui.roleDraft = Object.fromEntries(res.data.users.map((u) => [u.id, u.role]));
+}
+
 const LOADERS = {
-  overview: () => Promise.all([loadEvents(), loadMerchItems(), loadLookup()]),
+  overview: () => Promise.all([loadEvents(), loadMerchItems(), loadLookup(), loadUsers()]),
   events: async () => {
     await loadEvents();
     await loadDesk();
   },
   announcements: () => loadAnnouncements(),
   merch: () => Promise.all([loadMerchItems(), loadOrders()]),
-  tasks: () => Promise.all([loadTasks(), state.data.assignees ? null : loadAssignees()]),
+  tasks: () => Promise.all([loadTasks(), loadAssignees()]),
   finance: () => Promise.all([loadReimbursements(), loadLedger()]),
   profile: async () => {
     await refreshSession();
@@ -818,14 +838,99 @@ function viewOverview() {
       <div class="stack">${membershipCard(u)}</div>
       ${benefitsCard()}
     </div>
-    <div class="mt-16">${isStaff() ? lookupPanel() : lockedPanel('Door Member Lookup', 'Club staff (volunteers, the Treasurer and the Admin) use this at the door to verify a member in under a second.')}</div>`;
+    <div class="mt-16">${isStaff() ? lookupPanel() : lockedPanel('Door Member Lookup', 'Club staff (volunteers, the Treasurer and the Admin) use this at the door to verify a member in under a second.')}</div>
+    ${isAdmin() ? `<div class="mt-16">${accessPanel()}</div>` : ''}`;
+}
+
+function accessRoleBadge(u) {
+  return u.is_founding_admin ? badge('👑 Founding Admin', 'plum') : badge(roleLabel(u.role), ROLE_TONE[u.role]);
+}
+
+// Club Access & Role Management (admins). The server is the authority; this
+// table only hides choices it would refuse: a second admin can't grant or
+// change Admin, nobody edits the Founding Admin, and nobody edits themselves.
+function accessPanel() {
+  const data = state.data.users;
+  if (!data) return `<section class="card"><div class="card-body">${loadingBlock('Loading club members…')}</div></section>`;
+  const founder = data.viewer.is_founding_admin;
+  const rows = data.users.map((u) => {
+    let control;
+    if (u.is_founding_admin) control = '<span class="small muted">🔒 Protected · the Founding Admin’s role never changes</span>';
+    else if (u.id === state.user.id) control = '<span class="small muted">This is you · ask the Founding Admin to change your role</span>';
+    else if (u.role === 'ADMIN' && !founder) control = '<span class="small muted">🔒 Only the Founding Admin can change an Admin</span>';
+    else {
+      const draft = state.ui.roleDraft[u.id] || u.role;
+      const options = ROLES.map((r) => {
+        const locked = r === 'ADMIN' && !founder;
+        return `<option value="${r}"${r === draft ? ' selected' : ''}${locked ? ' disabled' : ''}>${roleLabel(r)}${locked ? ' (Founding Admin only)' : ''}</option>`;
+      }).join('');
+      control = `<div class="access-control">
+          <select id="role-${u.id}" class="select select-sm" data-model="ui.roleDraft.${u.id}" data-rerender="1" aria-label="New role for ${esc(u.name)}"${state.isLoading ? ' disabled' : ''}>${options}</select>
+          ${btn('Update Access', 'updateRole', { data: { id: u.id }, size: 'sm', disabled: draft === u.role, title: draft === u.role ? 'Pick a different role first' : `Make ${u.name} ${roleLabel(draft)}` })}
+        </div>`;
+    }
+    return `<tr>
+        <td><div class="person">${avatar(u.name, u.role)}<div><b>${esc(u.name)}</b>${u.id === state.user.id ? ' <span class="small muted">(you)</span>' : ''}<div class="small muted">${esc(u.email)}</div></div></div></td>
+        <td>${u.membership_code ? codeChip(u.membership_code) : '<span class="muted">—</span>'}</td>
+        <td>${membershipBadge(u.membership_status)}</td>
+        <td>${accessRoleBadge(u)}</td>
+        <td>${control}</td>
+      </tr>`;
+  }).join('');
+  const note = founder
+    ? 'As the Founding Admin you can grant any role, including Admin. Changes apply on the member’s very next click; no sign-out needed.'
+    : 'You can move members between Student, Volunteer and Treasurer. Only the Founding Admin can grant or change Admin access.';
+  return `<section class="card">
+    <div class="card-head"><h2>🛡️ Club Access & Role Management ${badge('Admin', 'plum')}</h2><span class="sub">${plural(data.count, 'member')} · PATCH /api/users/:id/role</span></div>
+    <div class="card-body"><div class="note note-plum">${note}</div></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Member</th><th>Code</th><th>Membership</th><th>Current role</th><th>Change access</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </section>`;
 }
 
 // ============================================================================ view: sign-in page (logged out)
 
+// Light/Dark pill: a sliding knob over the sun and moon, plus the current mode.
 function themeToggle(extraClass = '') {
   const dark = state.ui.theme === 'dark';
-  return `<button type="button" class="icon-btn theme-toggle ${extraClass}" data-action="toggleTheme" title="Switch to ${dark ? 'light' : 'dark'} mode" aria-label="Switch to ${dark ? 'light' : 'dark'} mode">${dark ? ICONS.sun : ICONS.moon}</button>`;
+  return `<button type="button" class="theme-pill${dark ? ' is-dark' : ''} ${extraClass}" data-action="toggleTheme" title="Switch to ${dark ? 'light' : 'dark'} mode" aria-label="Switch to ${dark ? 'light' : 'dark'} mode" aria-pressed="${dark}">
+      <span class="tp-track"><span class="tp-knob"></span><span class="tp-ico tp-sun">${ICONS.sun}</span><span class="tp-ico tp-moon">${ICONS.moon}</span></span>
+      <span class="tp-label">${dark ? 'Dark' : 'Light'}</span>
+    </button>`;
+}
+
+// The Skyline emblem: campus spires under a rising arc and star on a gradient
+// badge. Each copy needs its own gradient ids: a copy inside a hidden element
+// (the topbar while signed out) can't lend its gradients to another one.
+function brandLogo(id) {
+  return `<svg class="brand-logo" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="${id}-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a0729a"/><stop offset="0.5" stop-color="#5b3f8c"/><stop offset="1" stop-color="#312e81"/></linearGradient>
+      <radialGradient id="${id}-glow" cx="0.5" cy="0.28" r="0.62"><stop offset="0" stop-color="#fff" stop-opacity="0.42"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <linearGradient id="${id}-gold" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fef3c7"/><stop offset="0.5" stop-color="#fbbf24"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+      <linearGradient id="${id}-city" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c7d2fe"/></linearGradient>
+    </defs>
+    <rect x="1.5" y="1.5" width="45" height="45" rx="13" fill="url(#${id}-bg)"/>
+    <rect x="1.5" y="1.5" width="45" height="45" rx="13" fill="url(#${id}-glow)"/>
+    <rect x="2.25" y="2.25" width="43.5" height="43.5" rx="12.25" fill="none" stroke="#fff" stroke-opacity="0.3" stroke-width="1.2"/>
+    <path d="M10.5 29a13.5 13.5 0 0 1 27 0" fill="none" stroke="url(#${id}-gold)" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M24 10.6l1.3 3.1 3.1 1.3-3.1 1.3L24 19.4l-1.3-3.1-3.1-1.3 3.1-1.3z" fill="url(#${id}-gold)"/>
+    <g fill="url(#${id}-city)">
+      <path d="M11.5 37.5V30.5h4.4v7z"/>
+      <path d="M16.8 37.5V25.6l2.3-1.9 2.3 1.9v11.9z"/>
+      <path d="M22.2 37.5V23.2l1.8-3 1.8 3v14.3z"/>
+      <path d="M26.6 37.5V26.2h4.6v11.3z"/>
+      <path d="M32.1 37.5V31.2h4.4v6.3z"/>
+    </g>
+    <g fill="#4c3a8a" fill-opacity="0.55">
+      <rect x="13" y="32.4" width="1.4" height="1.6" rx="0.3"/><rect x="18.4" y="27.6" width="1.4" height="1.6" rx="0.3"/><rect x="18.4" y="31.2" width="1.4" height="1.6" rx="0.3"/>
+      <rect x="23.3" y="26" width="1.4" height="1.8" rx="0.3"/><rect x="23.3" y="30" width="1.4" height="1.8" rx="0.3"/>
+      <rect x="28.2" y="28.4" width="1.4" height="1.6" rx="0.3"/><rect x="28.2" y="32" width="1.4" height="1.6" rx="0.3"/><rect x="33.6" y="33.2" width="1.4" height="1.6" rx="0.3"/>
+    </g>
+    <rect x="9.5" y="37.4" width="29" height="1.9" rx="0.95" fill="#fff" fill-opacity="0.9"/>
+  </svg>`;
 }
 
 function passwordInput(model, { autocomplete = 'current-password', placeholder = '' } = {}) {
@@ -921,7 +1026,7 @@ function viewAuth() {
   const highlight = (icon, title, text) => `<li><span class="hl-icon" aria-hidden="true">${icon}</span><div><b>${title}</b><span>${text}</span></div></li>`;
   return `<div class="auth-page">
       <section class="auth-brand">
-        <div class="auth-logo"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 22h4v-7H7zm7 0h4V10h-4zm7 0h4v-10h-4z" fill="currentColor"/></svg></span>
+        <div class="auth-logo"><span class="brand-mark brand-emblem" aria-hidden="true">${brandLogo('hero-logo')}</span>
           <span><b>Skyline</b><small>Student Association ERP</small></span></div>
         <h1>Run the whole club from one place.</h1>
         <p class="lead">Memberships, Spring Gala tickets and door check-in, announcements, merch, the bake-sale planner and the treasurer's books, in one secure system.</p>
@@ -1419,12 +1524,28 @@ function viewTasks() {
   return `${head}<div class="stack">${switcher}${health}${isStaff() ? addTaskForm(campaigns) : ''}${board}</div>`;
 }
 
+// Staff assign or reassign right on the card; everyone else sees the name.
+function assigneePicker(t) {
+  const people = state.data.assignees || [];
+  const options = people.map((u) => `<option value="${u.id}"${u.id === t.assigned_to ? ' selected' : ''}>${esc(u.name)} · ${roleLabel(u.role)}</option>`).join('');
+  return `<label class="assign-row${t.assigned_to ? '' : ' unassigned'}">
+      ${t.assigned_to ? avatar(t.assignee_name, t.assignee_role) : '<span class="avatar avatar-none" aria-hidden="true">?</span>'}
+      <select class="select select-sm" data-assign-task="${t.id}" aria-label="Assigned to: ${esc(t.title)}"${state.isLoading ? ' disabled' : ''}>
+        <option value=""${t.assigned_to ? '' : ' selected'}>Unassigned: pick someone</option>${options}
+      </select>
+    </label>`;
+}
+
 function taskCard(t) {
   const mine = t.assigned_to === state.user.id;
   const canMove = isStaff() || mine;
   const assignee = t.assigned_to
     ? `<span class="assignee">${avatar(t.assignee_name, t.assignee_role)}${esc(t.assignee_name)}${mine ? ' (you)' : ''}</span>`
     : '<span class="assignee unassigned">Unassigned</span>';
+  const picker = isStaff() && state.data.assignees ? assigneePicker(t) : '';
+  const hint = !t.assigned_to && t.status === 'TODO'
+    ? `<div class="task-hint">${isStaff() ? 'Assign someone above before starting this task.' : 'Waiting for a volunteer to be assigned.'}</div>`
+    : '';
   const due = t.due_date
     ? `<span class="due${t.is_overdue ? ' overdue' : ''}">${t.is_overdue ? '⚠ Overdue · ' : 'Due '}${fmtDay(t.due_date)}</span>`
     : '<span class="due">No due date</span>';
@@ -1437,10 +1558,16 @@ function taskCard(t) {
       title: 'Only the assignee or a staff member can move this task. Click to watch the server refuse it.',
     }))).join('');
 
+  const remove = isAdmin()
+    ? btn('🗑 Delete', 'deleteTask', { data: { id: t.id, title: t.title }, variant: 'danger', size: 'sm', title: 'Admin only: permanently remove this task' })
+    : '';
+
   return `<div class="task${t.is_overdue ? ' overdue' : ''}${t.status === 'DONE' ? ' done' : ''}">
     <div class="task-title">${esc(t.title)}</div>
-    <div class="task-meta">${assignee}${due}</div>
-    <div class="task-actions">${actions}</div>
+    ${picker}
+    <div class="task-meta">${picker ? '' : assignee}${due}</div>
+    ${hint}
+    <div class="task-actions">${actions}${remove ? `<span class="task-actions-end">${remove}</span>` : ''}</div>
   </div>`;
 }
 
@@ -1464,12 +1591,70 @@ function addTaskForm(campaigns) {
 
 function viewFinance() {
   const head = pageHead("Scene 6 · Treasurer's office", "Treasurer's Financial Books & Reimbursements",
-    'Money only leaves the club when the Treasurer or Admin approves a claim; the payout and its ledger row commit together or not at all.');
+    'Everyone in the club can see where the money went. Only the Treasurer or Admin can approve a payout, and the payout and its ledger row commit together or not at all.');
   if (!state.user) return head + signInPrompt('see reimbursements and the club books');
   return `${head}<div class="stack">
+    ${glancePanel()}
     ${reimbursementsSection()}
-    ${isStaff() ? ledgerSection() : lockedPanel("Treasurer's semester ledger", 'The books are visible to staff (volunteers, the Treasurer and the Admin) only; students are refused by the server.')}
+    ${ledgerSection()}
   </div>`;
+}
+
+const MERCH_AND_FUNDRAISERS = 'MERCH_SALE,FUNDRAISER_INCOME';
+
+// Scene 6 at a glance: the treasurer's four questions (dues, tickets, merch and
+// fundraisers, reimbursed expenses) and In − Out = Left, from semester_story.
+function glancePanel() {
+  const L = state.data.ledger;
+  if (!L) return `<section class="card"><div class="card-body">${loadingBlock('Adding up the semester…')}</div></section>`;
+  const g = L.semester_story;
+  const sources = [
+    ['Dues', g.dues_collected.amount, 'plum'],
+    ['Tickets', g.tickets_sold.amount, 'blue'],
+    ['Merch', g.merch_sold.amount, 'teal'],
+    ['Fundraisers', g.fundraiser_income.amount, 'amber'],
+  ];
+  const share = (amount, whole) => (whole ? (amount / whole) * 100 : 0);
+  const sourceBar = sources.filter(([, amount]) => amount > 0)
+    .map(([label, amount, tone]) => `<span class="seg tone-${tone}" style="width:${share(amount, g.came_in).toFixed(2)}%" title="${label}: ${inr(amount)}"></span>`).join('');
+  const legend = sources.map(([label, amount, tone]) => `<span class="legend"><i class="dot tone-${tone}"></i>${label} ${inr(amount)}</span>`).join('');
+  const spent = Math.min(100, share(g.went_out, g.came_in));
+
+  const card = (icon, title, amount, sub, filter, tone, out = false) => {
+    const active = state.ui.ledgerCategory === filter && !state.ui.ledgerType;
+    return `<div class="glance-card tone-${tone}${active ? ' active' : ''}">
+        <div class="gc-head"><span class="gc-icon" aria-hidden="true">${icon}</span><span class="gc-title">${title}</span></div>
+        <div class="gc-amount ${out ? 'amount-out' : 'amount-in'}">${out ? signedInr(-amount) : inr(amount)}</div>
+        <div class="gc-sub">${sub}</div>
+        ${btn(active ? '✓ Showing these rows · show all' : 'Filter ledger rows →', 'ledgerFocus', { data: { category: filter }, variant: 'ghost', size: 'sm', mutation: false })}
+      </div>`;
+  };
+  const e = g.expenses_reimbursed;
+  const fundraising = g.merch_sold.amount + g.fundraiser_income.amount;
+  return `<section class="card glance">
+    <div class="card-head"><h2>📖 Semester Money At-a-Glance: What Came In, What Went Out &amp; What's Left</h2><span class="sub">live from the ledger · ${fmtDateTime(L.generated_at)}</span></div>
+    <div class="card-body stack">
+      <div class="glance-eq" role="group" aria-label="Money in minus money out equals balance">
+        <div class="eq-term in"><span class="eq-label">💰 What Came In</span><b class="eq-value">${inr(g.came_in)}</b></div>
+        <span class="eq-op" aria-hidden="true">−</span>
+        <div class="eq-term out"><span class="eq-label">🧾 What Went Out</span><b class="eq-value">${inr(g.went_out)}</b></div>
+        <span class="eq-op" aria-hidden="true">=</span>
+        <div class="eq-term left"><span class="eq-label">🏦 How Much Is Left</span><b class="eq-value">${inr(g.left)}</b></div>
+      </div>
+      <div class="glance-bars">
+        <div class="bar-caption"><b>Where the money came from</b><span class="legends">${legend}</span></div>
+        <div class="stack-bar" aria-hidden="true">${sourceBar}</div>
+        <div class="bar-caption"><b>What happened to it</b><span>${spent.toFixed(0)}% paid out to volunteers · ${(100 - spent).toFixed(0)}% still in the club account</span></div>
+        <div class="stack-bar" aria-hidden="true"><span class="seg tone-red" style="width:${spent.toFixed(2)}%"></span><span class="seg tone-green" style="width:${(100 - spent).toFixed(2)}%"></span></div>
+      </div>
+      <div class="glance-cards">
+        ${card('🪪', 'Dues Collected', g.dues_collected.amount, `${plural(g.dues_collected.count, 'membership payment')} from members joining or renewing`, 'MEMBERSHIP_DUES', 'plum')}
+        ${card('🎟️', 'Tickets Sold', g.tickets_sold.amount, `${plural(g.tickets_sold.count, 'ticket')} sold for the Spring Gala and club events`, 'TICKET_SALE', 'blue')}
+        ${card('👕', 'Merchandise & Fundraisers', fundraising, `${inr(g.merch_sold.amount)} from ${plural(g.merch_sold.count, 'merch order')} · ${inr(g.fundraiser_income.amount)} from ${plural(g.fundraiser_income.count, 'bake-sale collection')}`, MERCH_AND_FUNDRAISERS, 'teal')}
+        ${card('🧾', 'Volunteer Expenses Reimbursed', e.amount, `${plural(e.count, 'approved receipt')} paid back${e.pending_count ? ` · ${plural(e.pending_count, 'claim')} (${inr(e.pending_amount)}) awaiting review` : ' · no claims waiting'}`, 'EXPENSE_REIMBURSEMENT', 'red', true)}
+      </div>
+    </div>
+  </section>`;
 }
 
 function reimbursementsSection() {
@@ -1567,7 +1752,7 @@ function ledgerSection() {
   }).join('');
 
   const typeOptions = [['', 'All types'], ['IN', 'Money in'], ['OUT', 'Money out']];
-  const categoryOptions = [['', 'All categories'], ...LEDGER_CATEGORIES.map((c) => [c, LEDGER_LABEL[c]])];
+  const categoryOptions = [['', 'All categories'], ...LEDGER_CATEGORIES.map((c) => [c, LEDGER_LABEL[c]]), [MERCH_AND_FUNDRAISERS, 'Merch + fundraisers']];
   const rows = L.transactions.length
     ? L.transactions.map((t) => `<tr>
         <td class="nowrap">${fmtDateTime(t.created_at)}</td>
@@ -1581,11 +1766,6 @@ function ledgerSection() {
     : `<tr><td colspan="7">${emptyState('📒', 'No transactions match these filters.')}</td></tr>`;
 
   return `<section class="stack">
-    <div class="kpis">
-      <div class="kpi kpi-lg tone-green"><div class="kpi-label">Total Money In</div><div class="kpi-value">${inr(s.total_in)}</div><div class="kpi-sub">dues, tickets, merch, fundraising</div></div>
-      <div class="kpi kpi-lg tone-red"><div class="kpi-label">Total Money Out</div><div class="kpi-value">${inr(s.total_out)}</div><div class="kpi-sub">approved reimbursements</div></div>
-      <div class="kpi kpi-lg tone-plum"><div class="kpi-label">Net Club Balance</div><div class="kpi-value">${inr(s.net_balance)}</div><div class="kpi-sub">${plural(s.transaction_count, 'ledger row')} · ${fmtDateTime(L.generated_at)}</div></div>
-    </div>
     <div class="row-between">
       <div class="integrity">
         <span class="${balanced ? 'ok' : 'bad'}">${balanced ? '✓' : '✗'} In − Out = Net (${inr(s.total_in)} − ${inr(s.total_out)} = ${inr(s.net_balance)})</span>
@@ -1600,10 +1780,11 @@ function ledgerSection() {
       </section>
       ${isFinance() ? incomeForm() : ''}
     </div>
-    <section class="card">
+    <section class="card" id="ledger-table">
       <div class="card-head">
         <h2>📒 Immutable Ledger <span class="sub">${plural(L.count, 'row')}${L.filters.type || L.filters.category ? ' (filtered)' : ''}</span></h2>
         <div class="row">
+          ${L.filters.type || L.filters.category ? btn('Show all rows', 'ledgerClear', { variant: 'ghost', size: 'sm', mutation: false }) : ''}
           ${select('ui.ledgerType', typeOptions, { id: 'ledger-type', attrs: 'data-reload="ledger" aria-label="Filter by type"' })}
           ${select('ui.ledgerCategory', categoryOptions, { id: 'ledger-category', attrs: 'data-reload="ledger" aria-label="Filter by category"' })}
         </div>
@@ -1676,11 +1857,13 @@ function viewProfile() {
 
 function renderTopbar() {
   const u = state.user;
+  const founder = u?.id === FOUNDING_ADMIN_ID && u.role === 'ADMIN';
   const session = u
     ? `${themeToggle('on-dark')}
-       <a class="user-chip" href="#profile" title="My Profile & Settings">
-         ${avatar(u.name, u.role)}
-         <span class="who"><b>${esc(u.name)}</b>${badge(roleLabel(u.role), ROLE_TONE[u.role])}</span>
+       <a class="user-chip" href="#profile" title="My Profile & Settings" aria-label="${esc(u.name)}, ${founder ? 'Founding Admin' : roleLabel(u.role)}: open My Profile & Settings">
+         <span class="uc-avatar">${avatar(u.name, u.role)}<span class="uc-status" title="Signed in"></span></span>
+         <span class="who"><b>${esc(u.name)}</b><span class="role-pill role-${esc(u.role)}">${founder ? 'Founding Admin' : roleLabel(u.role)}</span></span>
+         <svg class="uc-chevron" ${SVG_ATTRS}><path d="m6 9 6 6 6-6"/></svg>
        </a>`
     : '';
   patch(document.getElementById('session'), session);
@@ -1911,9 +2094,47 @@ const ACTIONS = {
     renderMain();
   },
   taskStatus: ({ id, status }) => mutate(`taskStatus:${id}:${status}`, 'PATCH', `/api/tasks/${id}/status`, { status }, {
-    success: (d) => `“${d.task.title}” → ${TASK_STATUS[d.task.status][0]} · campaign ${d.campaign.completion_percentage}% done`,
+    success: (d) => ({ title: TASK_TOAST[d.task.status], message: `“${d.task.title}” is now ${TASK_STATUS[d.task.status][0].toLowerCase()} · campaign ${d.campaign.completion_percentage}% done.` }),
     refresh: () => loadTasks(),
   }),
+  assignTask: ({ id, value }) => mutate(`assign:${id}`, 'PATCH', `/api/tasks/${id}/status`, { assigned_to: value ? Number(value) : null }, {
+    success: (d) => ({
+      title: d.task.assigned_to ? 'Task Assigned' : 'Task Unassigned',
+      message: d.task.assigned_to ? `“${d.task.title}” is now with ${d.task.assignee_name}.` : `“${d.task.title}” has nobody assigned.`,
+    }),
+    refresh: () => loadTasks(),
+  }),
+  deleteTask: ({ id, title }) => {
+    if (!window.confirm(`Delete the task “${title}”? This can't be undone.`)) return null;
+    return mutate(`deleteTask:${id}:${title}`, 'DELETE', `/api/tasks/${id}`, undefined, {
+      success: (d) => ({ title: 'Task Deleted', message: `“${d.deleted.title}” was removed from ${d.deleted.campaign_name}.` }),
+      refresh: () => loadTasks(),
+    });
+  },
+  updateRole: ({ id }) => {
+    const user = state.data.users?.users.find((u) => u.id === Number(id));
+    const role = state.ui.roleDraft[id];
+    if (!user || !role || role === user.role) return null;
+    return mutate(`updateRole:${id}`, 'PATCH', `/api/users/${id}/role`, { role }, {
+      success: (d) => ({ title: 'Access Updated', message: `${d.user.name} is now ${roleLabel(d.user.role)} (was ${roleLabel(d.previous_role)}). It applies on their next click.` }),
+      onError: () => { state.ui.roleDraft[id] = user.role; },
+      refresh: () => loadUsers(),
+    });
+  },
+  ledgerFocus: async ({ category }) => {
+    const same = state.ui.ledgerCategory === category && !state.ui.ledgerType;
+    state.ui.ledgerCategory = same ? '' : category;
+    state.ui.ledgerType = '';
+    await loadLedger();
+    renderMain();
+    if (!same) document.getElementById('ledger-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  ledgerClear: async () => {
+    state.ui.ledgerCategory = '';
+    state.ui.ledgerType = '';
+    await loadLedger();
+    renderMain();
+  },
   reimbStatus: async ({ status }) => {
     state.ui.reimbStatus = status;
     renderMain();
@@ -2095,6 +2316,8 @@ document.addEventListener('input', (event) => {
 document.addEventListener('change', async (event) => {
   const el = event.target;
   if (el.dataset?.model) setPath(el.dataset.model, el.value);
+  if (el.dataset?.assignTask) await ACTIONS.assignTask({ id: el.dataset.assignTask, value: el.value });
+  if (el.dataset?.rerender) renderMain();
   if (el.dataset?.reload) {
     if (el.dataset.reload === 'desk') state.ui.lastCheckIn = null;
     await RELOADERS[el.dataset.reload]?.();

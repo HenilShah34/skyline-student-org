@@ -1,10 +1,10 @@
 # Skyline Student Association ERP
 
-A small, complete ERP for a student association, built for the **Odoo × LDCE Hackathon 2026**. It covers memberships, event ticketing with door check-in, announcements, a merch store, a fundraiser task board, and the treasurer's books, all on one transactional SQLite database with a zero-dependency browser UI. Four roles (Admin, Treasurer, Volunteer, Student) each see exactly what they're allowed to do.
+A small, complete ERP for a student association, built for the **Odoo × LDCE Hackathon 2026**. It covers memberships, event ticketing with door check-in, announcements, a merch store, a fundraiser task board, and the treasurer's books, all on one transactional SQLite database with a zero-dependency browser UI. Four roles (Admin, Treasurer, Volunteer, Student) each see exactly what they're allowed to do, and admins manage those roles from inside the app under a Founding Admin hierarchy.
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
-- **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, and light/dark themes.
-- **Proof:** 6 automated verification suites (183 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
+- **Proof:** 6 automated verification suites (202 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -16,8 +16,8 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 | 2 | **Events & door check-in** | Members pay the member price and everyone else the guest price, decided **on the server** from the live membership. Seats are claimed in a locked transaction. Volunteers scan `TKT-…` codes at the door; a second scan is refused. | `events`, `tickets`, `ledger_transactions` |
 | 3 | **Announcements** | Category and keyword archive. Members-only posts are filtered out in SQL for non-members, who see how many are hidden. Staff broadcasts report a recipient count. | `announcements` |
 | 4 | **Merch store** | Hoodies and tees with per-size stock (S/M/L/XL), member vs regular pricing, and a pickup desk that records who handed each order over and when. | `merch_variants`, `merch_orders`, `ledger_transactions` |
-| 5 | **Bake-sale planner** | A To do / In progress / Done board with campaign progress and an "on track" flag (no overdue unfinished tasks). Students may move only tasks assigned to them. | `fundraiser_tasks` |
-| 6 | **Treasurer's books** | Staff submit receipts; only the Treasurer or Admin can approve, never on their own claim, and approval writes exactly one money-out row. A live ledger shows totals and a per-category breakdown; the Treasurer and Admin also export it as CSV and record fundraiser income. | `expense_reimbursements`, `ledger_transactions` |
+| 5 | **Bake-sale planner** | A To do / In progress / Done board with campaign progress and an "on track" flag (no overdue unfinished tasks). Cards move in every direction (start, back to To do, done, reopen). Staff assign people from a dropdown on each card, and an unassigned task can't be started or finished. Students may move only tasks assigned to them; only the Admin can delete a task. | `fundraiser_tasks` |
+| 6 | **Treasurer's books** | A **Semester Money At-a-Glance** panel answers the treasurer's questions for everyone in the club: *What Came In − What Went Out = How Much Is Left*, then dues collected, tickets sold, merchandise and fundraisers, and volunteer expenses reimbursed (with claims still waiting). Each card filters the ledger to the rows behind it. Staff submit receipts; only the Treasurer or Admin can approve, never on their own claim, and approval writes exactly one money-out row. The Treasurer and Admin also export the books as CSV and record fundraiser income. | `expense_reimbursements`, `ledger_transactions` |
 
 **The thread that ties them together is the ledger.** Every rupee that moves (dues, ticket sales, merch sales, fundraiser income, reimbursements) is appended to `ledger_transactions` *in the same transaction* as the change that caused it. The treasurer's totals therefore always reconcile: `total_in − total_out = net_balance`, and the five categories add up to the whole.
 
@@ -40,7 +40,7 @@ Browser (public/app.js)            Express 5 (server.js)                        
 | Atomic writes | `withTransaction(fn)`: `BEGIN IMMEDIATE … COMMIT`, `ROLLBACK` on any error, savepoints for nesting, `SQLITE_BUSY` retry with backoff. | `db.js` |
 | Passwords | `scrypt` with a random 16-byte salt (`saltHex:hashHex`), compared with `crypto.timingSafeEqual`. Unknown emails are checked against a dummy hash, so response time doesn't reveal which accounts exist. | `lib/password.js` |
 | Sessions | Stateless tokens: `base64url(JSON payload).HMAC-SHA256`, 7-day expiry. The signature is verified **before** the payload is trusted. | `lib/token.js`, `middleware/requireAuth.js` |
-| Authorization | `requireAuth` (401), `requireRole(...)` (403), plus row-level rules in routes: students move only their own tasks, and nobody (Treasurer or Admin) can review their own claim. | `middleware/`, `routes/` |
+| Authorization | `requireAuth` (401), `requireRole(...)` (403), plus row-level rules in routes: students move only their own tasks, and nobody (Treasurer or Admin) can review their own claim. The token proves *who* you are; your role is read live from the `users` row on every request, so a promotion or demotion applies on the very next click. | `middleware/`, `routes/` |
 | Account recovery | Forgot email: look an account up by membership code or full name; the email comes back for that account only. Forgot password: email **plus** membership code or full name, a new password of 6+ characters, and an immediate sign-in. A wrong pair and an unknown email get the same `401`. | `server.js` `/api/auth/*` |
 | Pricing | Always recalculated on the server from the live membership row. Prices in request bodies are ignored. | `routes/events.js`, `routes/merch.js` |
 | Input handling | Strict parsers for ids, enums and integers (`400` before any DB work); parameterised SQL everywhere; `LIKE` wildcards escaped; 100 kb JSON limit (`413`). | `lib/http.js` |
@@ -224,7 +224,7 @@ All five passwords are `skyline123`. On the sign-in page, open **🔑 Quick Fill
 
 | Account | Email | Role | Shows off |
 |---|---|---|---|
-| Vikram Desai | `vikram@skyline.edu` | Admin (`SKY-2026-001`) | Creates events, approves claims (including the Treasurer's), runs everything staff can |
+| Vikram Desai | `vikram@skyline.edu` | Founding Admin (`SKY-2026-001`) | Creates events, deletes tasks, grants and changes every role (including Admin), approves claims (including the Treasurer's) |
 | Meera Joshi | `meera@skyline.edu` | Treasurer (`SKY-2026-002`) | Approves or rejects reimbursements, records fundraiser income, exports the books as CSV |
 | Neha Sharma | `neha@skyline.edu` | Volunteer (`SKY-2026-003`) | Door check-in, pickup desk, announcements, task board, submits expense receipts |
 | Rohan Verma | `rohan@skyline.edu` | Student, member expiring in 10 days (`SKY-2026-004`) | Member prices (₹250 Gala, ₹899 hoodie), members-only posts, renewal banner |
@@ -235,27 +235,59 @@ All five passwords are `skyline123`. On the sign-in page, open **🔑 Quick Fill
 | Action | Student | Volunteer | Treasurer | Admin |
 |---|:-:|:-:|:-:|:-:|
 | Join/renew, buy tickets and merch, read announcements | ✓ | ✓ | ✓ | ✓ |
+| See the semester books: at-a-glance panel and ledger | ✓ | ✓ | ✓ | ✓ |
 | Move a bake-sale task | own tasks only | ✓ | ✓ | ✓ |
-| Door lookup and check-in, pickup desk, post announcements, add tasks | | ✓ | ✓ | ✓ |
-| Submit an expense receipt, view the ledger, `GET /api/system/proof` | | ✓ | ✓ | ✓ |
+| Door lookup and check-in, pickup desk, post announcements, add and assign tasks | | ✓ | ✓ | ✓ |
+| Submit an expense receipt, `GET /api/system/proof` | | ✓ | ✓ | ✓ |
 | Approve or reject a reimbursement (never your own) | | | ✓ | ✓ |
 | Record fundraiser income, export the ledger as CSV | | | ✓ | ✓ |
-| Create an event | | | | ✓ |
+| Create an event, delete a task, manage roles | | | | ✓ |
+
+### Club access and the Founding Admin
+
+Admins manage roles from the **🛡️ Club Access & Role Management** table on the Overview tab (`GET /api/users`, `PATCH /api/users/:id/role`).
+
+- **The Founding Admin** (the first account, Vikram) is at the top. Nobody can change this account's role, and only this account can grant Admin or change another Admin.
+- **A second Admin** can move members between Student, Volunteer and Treasurer. Trying to grant or change Admin is refused with *"Only the Founding Admin can grant or modify Admin access. You may assign Student, Volunteer, or Treasurer roles."* The table shows the Admin option as disabled with that note.
+- **Nobody can change their own role**, not even the Founding Admin.
+- Because roles are read live, a promoted volunteer gets staff access, and a demoted one loses it, on their next request without signing out.
+
+### Bake-sale workflow
+
+- **Every direction:** To do → **Start Task →**; In progress → **← Move to To Do** or **Mark Done ✓**; Done → **← Move to In Progress** or **↺ Reopen to To Do**.
+- **Unassigned guard:** `PATCH /api/tasks/:id/status` refuses to start or finish a task with nobody assigned (`409`, *"Please assign a volunteer or member to this task before starting or completing it"*). Unassigning a task that is in progress is refused the same way.
+- **Inline assign:** staff pick or change the assignee from a dropdown on each card. The same endpoint takes `{ assigned_to }`, `{ status }`, or both.
+- **Admin delete:** `DELETE /api/tasks/:id` (Admin only) removes a task and returns the updated `campaigns_summary`.
+
+### Semester money at a glance
+
+`GET /api/finance/ledger` is open to every signed-in member and returns a `semester_story`:
+
+| Field | What it holds |
+|---|---|
+| `came_in`, `went_out`, `left` | Total in, total out and the balance (`came_in − went_out = left`) |
+| `dues_collected` | ₹ and count of `MEMBERSHIP_DUES` rows |
+| `tickets_sold` | ₹ and count of `TICKET_SALE` rows |
+| `merch_sold` | ₹ and count of `MERCH_SALE` rows |
+| `fundraiser_income` | ₹ and count of `FUNDRAISER_INCOME` rows |
+| `expenses_reimbursed` | ₹ and count of approved `EXPENSE_REIMBURSEMENT` rows, plus `pending_count` / `pending_amount` of claims still awaiting review |
+
+`?category=` also takes a comma-separated list, so the "Merchandise & Fundraisers" card filters with `?category=MERCH_SALE,FUNDRAISER_INCOME`.
 
 ### Sign-in, recovery and profile
 
 - **Sign in / Create account:** a full-screen split page with a show/hide password toggle. Registration asks for the password twice (8+ characters) and signs you in straight away.
 - **Forgot email** (`POST /api/auth/forgot-email`): enter your membership code (`SKY-2026-004`) or full name. The account's email appears, and one click puts it in the sign-in form.
 - **Forgot password** (`POST /api/auth/forgot-password`): enter your email plus your membership code or full name, then choose a new password (6+ characters). You're signed in with it immediately.
-- **My Profile & Settings** (`PATCH /api/auth/profile`): your membership ID card, edit your display name, change your password (the current one is required), pick a light or dark theme, and sign out. Click your name chip in the top bar to get there.
-- **Theme:** the ☀/☾ button in the top bar switches themes. The choice is saved on the device (`localStorage` key `skyline.theme`) and applied before the first paint; with no saved choice, the operating system's preference wins.
+- **My Profile & Settings** (`PATCH /api/auth/profile`): your membership ID card, edit your display name, change your password (the current one is required), pick a light or dark theme, and sign out. Click your profile pill in the top bar to get there. It shows your avatar, a live status dot and a colour-coded role pill.
+- **Theme:** the Light/Dark pill in the top bar (a sliding knob over a glowing sun and moon) switches themes. The choice is saved on the device (`localStorage` key `skyline.theme`) and applied before the first paint; with no saved choice, the operating system's preference wins.
 - **Layout:** the ☰ button collapses the sidebar to icons on desktop. Below 900 px it opens a slide-out drawer with a backdrop; Esc or a tap outside closes it.
 - **Messages:** every result appears as a toast with a plain-language title and sentence (for example "Sold Out" or "Action Not Allowed"), never a raw status code.
 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 6 suites on better-sqlite3 (183 checks, ~15 s)
+npm run verify:fast          # all 6 suites on better-sqlite3 (202 checks, ~15 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows
@@ -268,7 +300,7 @@ npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic ro
 | `verify-phase3.js` | Double-renewal guard, members-only announcements, merch pricing, stock race, pickup |
 | `verify-phase4.js` | Schema migration, task board, reimbursements, Treasurer approvals and the no-self-approval rule, double-payout race, ledger integrity |
 | `verify-phase5.js` | Static client, offline guarantee, no file leaks, per-viewer pricing fields |
-| `verify-phase6.js` | CSV export (Treasurer/Admin only) and formula-injection guard, live index proof, role separation, account recovery and profile, the TREASURER role migration, security and edge-case sweep |
+| `verify-phase6.js` | CSV export (Treasurer/Admin only) and formula-injection guard, live index proof, role separation, account recovery and profile, the semester-at-a-glance numbers, task moves in every direction with the unassigned guard and admin delete, the Founding Admin role hierarchy with live role changes, the TREASURER role migration, and a security and edge-case sweep |
 
 Every suite starts a real `node server.js` on a random port against a temporary database. Port 3000 and `skyline.db` are never touched.
 
@@ -283,7 +315,7 @@ seed.js                   Demo data (auto on an empty DB, or `npm run seed -- --
 lib/                      password, token, users (membership status), viewer, ledger,
                           codes, fundraising, http (errors + parsers), testHooks
 middleware/requireAuth.js requireAuth · optionalAuth · requireRole
-routes/                   memberships · events · announcements · merch · tasks · finance
+routes/                   memberships · events · announcements · merch · tasks · finance · users (roles)
 public/                   index.html · styles.css · app.js (the whole UI)
 verify-*.js               Verification suites (verify-all.js runs them)
 proof-*.js                Live terminal demos

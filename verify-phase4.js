@@ -431,11 +431,11 @@ async function run() {
   const merchOnly = await api('GET', '/api/finance/ledger?category=merch_sale', { token: tok('neha') });
   const badLedger = await api('GET', '/api/finance/ledger?type=SIDEWAYS', { token: tok('vikram') });
   const studentLedger = await api('GET', '/api/finance/ledger', { token: tok('kabir') });
-  check('?type / ?category filter the list (summary stays whole-book); bad filter -> 400; student -> 403',
+  check('?type / ?category filter the list (summary stays whole-book); bad filter -> 400; a student can read it too',
     outOnly.status === 200 && outOnly.body.transactions.every((t) => t.type === 'OUT') &&
       outOnly.body.count === db.prepare("SELECT COUNT(*) AS n FROM ledger_transactions WHERE type = 'OUT'").get().n &&
       merchOnly.body.transactions.every((t) => t.category === 'MERCH_SALE') && merchOnly.body.count > 0 &&
-      merchOnly.body.summary.net_balance === summary.net_balance && badLedger.status === 400 && studentLedger.status === 403);
+      merchOnly.body.summary.net_balance === summary.net_balance && badLedger.status === 400 && studentLedger.status === 200);
 
   section('EXPLAIN QUERY PLAN — ledger filters');
   const plans = [

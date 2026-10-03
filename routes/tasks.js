@@ -138,42 +138,67 @@ router.post('/', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (r
   res.status(201).json({ task: toTaskView(task), campaign: campaignSummaries(task.campaign_name)[task.campaign_name] });
 });
 
+// Moves a task between columns (any direction: To do <-> In progress <-> Done)
+// and/or reassigns it. Body: { status?, assigned_to? }; at least one is needed.
+// Staff may reassign; a student may only move a task assigned to them.
 router.patch('/:id/status', requireAuth, (req, res) => {
   const id = parsePositiveInt(req.params.id);
   if (!id) throw validationFailed({ id: 'Task id must be a positive integer' });
 
   const body = req.body || {};
-  const status = typeof body.status === 'string' ? body.status.trim().toUpperCase() : '';
+  const hasStatus = body.status !== undefined;
+  const status = hasStatus && typeof body.status === 'string' ? body.status.trim().toUpperCase() : '';
   const reassign = body.assigned_to !== undefined;
   const assignee = reassign ? parseAssignee(body.assigned_to) : null;
 
   const details = {};
-  if (!TASK_STATUSES.includes(status)) details.status = `status must be one of ${TASK_STATUSES.join(', ')}`;
+  if (!hasStatus && !reassign) details.status = `Send a status (${TASK_STATUSES.join(', ')}) and/or assigned_to`;
+  else if (hasStatus && !TASK_STATUSES.includes(status)) details.status = `status must be one of ${TASK_STATUSES.join(', ')}`;
   if (assignee?.error) details.assigned_to = assignee.error;
   if (Object.keys(details).length) throw validationFailed(details);
 
   const isStaff = STAFF_ROLES.has(req.user.role);
   if (reassign && !isStaff) {
-    throw new HttpError(403, 'Forbidden', { reason: 'only volunteers and admins can reassign tasks' });
+    throw new HttpError(403, 'Forbidden', { reason: 'only volunteers, the Treasurer and the Admin can reassign tasks' });
   }
 
   const task = withTransaction(() => {
-    const current = db.prepare('SELECT id, assigned_to FROM fundraiser_tasks WHERE id = ?').get(id);
+    const current = db.prepare('SELECT id, status, assigned_to FROM fundraiser_tasks WHERE id = ?').get(id);
     if (!current) throw new HttpError(404, 'Task not found');
     if (!isStaff && current.assigned_to !== req.user.id) {
       throw new HttpError(403, 'Forbidden', { reason: 'students can only update tasks assigned to them' });
     }
 
-    if (reassign) {
-      if (assignee.value !== null) assertUserExists(assignee.value);
-      db.prepare('UPDATE fundraiser_tasks SET status = ?, assigned_to = ? WHERE id = ?').run(status, assignee.value, id);
-    } else {
-      db.prepare('UPDATE fundraiser_tasks SET status = ? WHERE id = ?').run(status, id);
+    const nextStatus = hasStatus ? status : current.status;
+    const effectiveAssignee = reassign ? assignee.value : current.assigned_to;
+    // Nobody owns an unassigned task, so it can't be started or finished.
+    if (nextStatus !== 'TODO' && effectiveAssignee === null) {
+      throw new HttpError(409, 'Please assign a volunteer or member to this task before starting or completing it', {
+        task_id: id,
+        status: nextStatus,
+      });
     }
+    if (reassign && effectiveAssignee !== null) assertUserExists(effectiveAssignee);
+
+    db.prepare('UPDATE fundraiser_tasks SET status = ?, assigned_to = ? WHERE id = ?').run(nextStatus, effectiveAssignee, id);
     return db.prepare(`${TASK_SQL} WHERE t.id = ?`).get(id);
   });
 
   res.json({ task: toTaskView(task), campaign: campaignSummaries(task.campaign_name)[task.campaign_name] });
+});
+
+router.delete('/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) throw validationFailed({ id: 'Task id must be a positive integer' });
+
+  const deleted = withTransaction(() => {
+    const task = db.prepare('SELECT id, campaign_name, title, status FROM fundraiser_tasks WHERE id = ?').get(id);
+    if (!task) throw new HttpError(404, 'Task not found');
+    db.prepare('DELETE FROM fundraiser_tasks WHERE id = ?').run(id);
+    return task;
+  });
+
+  res.json({ deleted, campaigns_summary: campaignSummaries() });
 });
 
 module.exports = router;

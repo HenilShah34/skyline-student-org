@@ -170,9 +170,49 @@ router.patch('/reimbursements/:id/review', requireAuth, requireRole('TREASURER',
   res.json(result);
 });
 
-router.get('/ledger', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
+// ?category= takes one category or a comma-separated list (MERCH_SALE,FUNDRAISER_INCOME).
+function parseCategories(value) {
+  if (value === undefined) return [];
+  const list = typeof value === 'string' ? value.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean) : [];
+  if (!list.length || list.some((c) => !LEDGER_CATEGORIES.includes(c))) {
+    throw validationFailed({ category: `category must be one or more of ${LEDGER_CATEGORIES.join(', ')} (comma-separated)` });
+  }
+  return [...new Set(list)];
+}
+
+// The treasurer's four questions, answered from the same grouped totals:
+// dues collected, tickets sold, merchandise sold (plus fundraiser takings), and
+// every volunteer expense reimbursed, with claims still awaiting review.
+function semesterStory(byCategory, summary) {
+  const of = (category) => byCategory.find((c) => c.category === category);
+  const inflow = (category) => ({ amount: of(category).total_in, count: of(category).transaction_count });
+  const expenses = of('EXPENSE_REIMBURSEMENT');
+  const pending = db
+    .prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS amount FROM expense_reimbursements WHERE status = 'PENDING'")
+    .get();
+  return {
+    came_in: summary.total_in,
+    went_out: summary.total_out,
+    left: summary.net_balance,
+    dues_collected: inflow('MEMBERSHIP_DUES'),
+    tickets_sold: inflow('TICKET_SALE'),
+    merch_sold: inflow('MERCH_SALE'),
+    fundraiser_income: inflow('FUNDRAISER_INCOME'),
+    expenses_reimbursed: {
+      amount: expenses.total_out,
+      count: expenses.transaction_count,
+      pending_count: pending.n,
+      pending_amount: pending.amount,
+    },
+  };
+}
+
+// Open to every signed-in member: the club wants anyone on the team to see what
+// came in, what went out and what is left. Changing the books stays with the
+// Treasurer and Admin (review, fundraiser income, CSV export).
+router.get('/ledger', requireAuth, (req, res) => {
   const type = parseEnumParam(req.query.type, LEDGER_TYPES, 'type');
-  const category = parseEnumParam(req.query.category, LEDGER_CATEGORIES, 'category');
+  const categories = parseCategories(req.query.category);
 
   // Every category appears, even with no rows, so the breakdown always reads the
   // same way. In and out are split per category so a future refund (OUT on
@@ -201,12 +241,12 @@ router.get('/ledger', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'
   if (type) {
     where.push('l.type = ?');
     params.push(type);
-  } else if (category) {
+  } else if (categories.length) {
     where.push("l.type IN ('IN', 'OUT')");
   }
-  if (category) {
-    where.push('l.category = ?');
-    params.push(category);
+  if (categories.length) {
+    where.push(`l.category IN (${categories.map(() => '?').join(', ')})`);
+    params.push(...categories);
   }
 
   const transactions = db
@@ -221,11 +261,13 @@ router.get('/ledger', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'
     .all(...params)
     .map((t) => ({ ...t, signed_amount: t.type === 'IN' ? t.amount : -t.amount }));
 
+  const summary = ledgerSummary();
   res.json({
     generated_at: new Date().toISOString(),
-    summary: ledgerSummary(),
+    summary,
+    semester_story: semesterStory(byCategory, summary),
     by_category: byCategory,
-    filters: { type, category },
+    filters: { type, category: categories.length ? categories.join(',') : null },
     count: transactions.length,
     transactions,
   });
