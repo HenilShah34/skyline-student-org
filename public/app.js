@@ -35,6 +35,7 @@ const ICONS = {
   moon: `<svg ${SVG_ATTRS}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>`,
   eye: `<svg ${SVG_ATTRS}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
   eyeOff: `<svg ${SVG_ATTRS}><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.1 6.1C3.4 7.9 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4-.9"/></svg>`,
+  search: `<svg ${SVG_ATTRS}><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`,
 };
 
 const PRODUCT_ART = {
@@ -97,7 +98,6 @@ function blankData() {
     assignees: null,
     reimbursements: null,
     ledger: null,
-    proof: null,
   };
 }
 
@@ -126,7 +126,6 @@ const state = {
   pendingAction: null, // the one button that shows "Processing..."
   tabLoading: false,
   booting: true,
-  health: null,
   demo: { password: null, accounts: [] },
   data: blankData(),
   ui: {
@@ -154,7 +153,6 @@ const state = {
     navCollapsed: false, // desktop: icon-only sidebar
     navOpen: false, // mobile: slide-out drawer
     theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
-    proofOpen: false,
   },
   forms: blankForms(),
   toasts: [],
@@ -491,11 +489,6 @@ async function loadDemoAccounts() {
   if (res.ok) state.demo = res.data;
 }
 
-async function loadHealth() {
-  const res = await api('GET', '/api/health');
-  state.health = res.ok ? res.data : null;
-}
-
 // ============================================================================ loaders
 
 async function loadEvents() {
@@ -742,7 +735,8 @@ function submitBtn(form, label, { variant = 'primary', block = false } = {}) {
 }
 
 function input(model, { id, type = 'text', placeholder = '', cls = '', attrs = '' } = {}) {
-  return `<input id="${id || modelId(model)}" class="input ${cls}" type="${type}" data-model="${model}" value="${esc(getPath(model))}" placeholder="${esc(placeholder)}" ${attrs}>`;
+  const el = `<input id="${id || modelId(model)}" class="input ${cls}" type="${type}" data-model="${model}" value="${esc(getPath(model))}" placeholder="${esc(placeholder)}" ${attrs}>`;
+  return /\binput-search\b/.test(cls) ? `<div class="search-field"><span class="search-icon" aria-hidden="true">${ICONS.search}</span>${el}</div>` : el;
 }
 
 function textarea(model, { id, placeholder = '', attrs = '' } = {}) {
@@ -1206,7 +1200,7 @@ function checkInDesk() {
 
 function viewAnnouncements() {
   const data = state.data.announcements;
-  const head = pageHead('Scene 3 · Announcements', 'Announcements & Mailing Archive',
+  const head = pageHead('Scene 3 · Announcements', 'Club Announcements',
     'Members-only posts are filtered on the server from your live membership, never in the browser.');
   if (!data) return head + loadingBlock();
 
@@ -1240,7 +1234,7 @@ function viewAnnouncements() {
     : emptyState('📭', 'No announcements match these filters.');
 
   const listCard = `<section class="card">
-    <div class="card-head"><h2>📰 Archive <span class="sub">${plural(data.count, 'post')}</span></h2><span class="sub">${viewerLine}</span></div>
+    <div class="card-head"><h2>📰 Club Announcements Feed <span class="sub">${plural(data.count, 'post')}</span></h2><span class="sub">${viewerLine}</span></div>
     ${list}
   </section>`;
 
@@ -1642,7 +1636,7 @@ function viewProfile() {
   const dark = state.ui.theme === 'dark';
   const themeOption = (value, label, icon) => `<button type="button" class="theme-option${state.ui.theme === value ? ' active' : ''}" data-action="setTheme" data-theme="${value}" aria-pressed="${state.ui.theme === value}">${icon}<span>${label}</span></button>`;
   return `${pageHead('Account', 'My Profile & Settings', 'Your membership card, account details, password and appearance.')}
-    <div class="grid grid-2">
+    <div class="grid grid-2 profile-page">
       <div class="stack">${membershipCard(u)}</div>
       <div class="stack">
         <section class="card">
@@ -1693,20 +1687,12 @@ function renderTopbar() {
 }
 
 function renderNav() {
-  const h = state.health;
-  const health = h
-    ? `<span class="ok">●</span> Database healthy · ${esc(h.database.driver)}<br>SQLite ${esc(h.database.sqlite_version)} · ${esc(String(h.database.journal_mode).toUpperCase())} · FK ${h.database.foreign_keys ? 'ON' : 'OFF'}`
-    : 'Checking database health…';
   const item = (t) => `<a class="nav-item${state.activeTab === t.id ? ' active' : ''}" href="#${t.id}" title="${esc(t.label)}"${state.activeTab === t.id ? ' aria-current="page"' : ''}>
       ${ICONS[t.id]}<span class="nav-text"><b>${t.label}</b><small>${t.scene}</small></span></a>`;
   const scenes = TABS.filter((t) => t.id !== 'profile').map(item).join('');
   const account = TABS.filter((t) => t.id === 'profile').map(item).join('');
-  const proof = isStaff()
-    ? `<button type="button" class="proof-btn" data-action="openProof" title="Live PRAGMA, table counts and EXPLAIN QUERY PLAN from the running database">🗄 <span class="nav-text">DB &amp; Index Proof</span></button>`
-    : '';
   patch(document.getElementById('nav'), `<div class="nav-heading">Club</div>${scenes}
-    <div class="nav-heading">Account</div>${account}
-    <div class="nav-foot">${proof}<div class="nav-text db-health">${health}</div></div>`);
+    <div class="nav-heading">Account</div>${account}`);
 }
 
 const VIEWS = {
@@ -1739,42 +1725,6 @@ function renderToasts() {
     </div>`).join(''));
 }
 
-// Live database proof (GET /api/system/proof): pragmas, query plans, counts.
-function proofModal() {
-  const p = state.data.proof;
-  let body = loadingBlock('Reading the live database…');
-  if (p) {
-    const plans = p.query_plans.map((q) => `<tr>
-        <td><b>${esc(q.name)}</b><div class="small muted">${esc(q.expected_index)}</div></td>
-        <td><code class="plan">${esc(q.plan)}</code></td>
-        <td>${q.uses_index && !q.full_scan ? badge('✓ Index search', 'green') : badge('✗ Full scan', 'red')}</td>
-      </tr>`).join('');
-    const counts = Object.entries(p.table_counts)
-      .map(([table, n]) => `<div class="kpi"><div class="kpi-label">${esc(table)}</div><div class="kpi-value">${n}</div></div>`).join('');
-    const l = p.ledger_integrity;
-    body = `<div class="card-body stack" style="gap:16px">
-        <div class="row">
-          ${badge(`foreign_keys = ${p.pragmas.foreign_keys}`, p.pragmas.foreign_keys === 1 ? 'green' : 'red')}
-          ${badge(`journal_mode = ${p.pragmas.journal_mode}`, p.pragmas.journal_mode === 'wal' ? 'green' : 'red')}
-          ${badge(`${p.driver} · SQLite ${p.sqlite_version}`, 'slate')}
-          ${p.all_queries_use_index ? badge('All 5 lookups use a B-tree index', 'plum') : badge('Some lookups scan', 'red')}
-        </div>
-        <div><h3 class="small strong">EXPLAIN QUERY PLAN on the key lookups</h3>
-          <div class="table-wrap mt-8"><table><thead><tr><th>Lookup</th><th>Live plan from SQLite</th><th>Result</th></tr></thead><tbody>${plans}</tbody></table></div></div>
-        <div class="note ${l.balanced ? 'note-green' : 'note-amber'}">${l.balanced ? '✓' : '✗'} Ledger integrity: in ${inr(l.total_in)} − out ${inr(l.total_out)} = net ${inr(l.net_balance)} across ${plural(l.transaction_count, 'row')}</div>
-        <div><h3 class="small strong">Live row counts (10 tables)</h3><div class="kpis mt-8">${counts}</div></div>
-        <div class="small muted">Read at ${fmtDateTime(p.generated_at)} · GET /api/system/proof</div>
-      </div>`;
-  }
-  return `<div class="modal-backdrop" data-action="closeModal" data-self="1">
-    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="proof-title">
-      <div class="card-head"><h2 id="proof-title">🗄 Database &amp; Index Proof</h2>
-        <div class="row">${btn('Refresh', 'openProof', { variant: 'secondary', size: 'sm', mutation: false })}<button type="button" class="icon-btn" data-action="closeModal" aria-label="Close">×</button></div></div>
-      ${body}
-    </div>
-  </div>`;
-}
-
 // Hands a downloaded Blob to the browser as a file.
 function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -1785,10 +1735,6 @@ function saveBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function renderModal() {
-  patch(document.getElementById('modal-root'), state.ui.proofOpen ? proofModal() : '');
 }
 
 // Replaces a region's HTML only when it changed, keeping keyboard focus and the
@@ -1830,7 +1776,6 @@ function render() {
   renderNav();
   renderMain();
   renderToasts();
-  renderModal();
 }
 
 // Light/dark theme on <html data-theme>, remembered on this device.
@@ -1860,10 +1805,6 @@ const ACTIONS = {
     state.activeTab = 'overview';
     infoToast('You have been signed out of this device.', 'Signed Out');
     render();
-  },
-  closeModal: () => {
-    state.ui.proofOpen = false;
-    renderModal();
   },
   openAuth: ({ mode }) => {
     state.ui.authView = mode === 'register' ? 'register' : 'signin';
@@ -1992,18 +1933,6 @@ const ACTIONS = {
     onSuccess: (_data, res) => saveBlob(res.blob, 'skyline-semester-ledger.csv'),
     refresh: () => null, // a download changes nothing on the server
   }),
-  openProof: async () => {
-    state.ui.proofOpen = true;
-    state.data.proof = null;
-    renderModal();
-    const res = await api('GET', '/api/system/proof');
-    if (res.ok) state.data.proof = res.data;
-    else {
-      state.ui.proofOpen = false;
-      toastIfError(res);
-    }
-    renderModal();
-  },
 };
 
 const FORMS = {
@@ -2151,7 +2080,6 @@ const RELOADERS = { desk: loadDesk, ledger: loadLedger };
 document.addEventListener('click', (event) => {
   const el = event.target.closest('[data-action]');
   if (!el || el.disabled) return;
-  if (el.dataset.self && event.target !== el) return; // modal backdrop: only direct clicks close it
   const handler = ACTIONS[el.dataset.action];
   if (!handler) return;
   event.preventDefault();
@@ -2183,8 +2111,7 @@ document.addEventListener('submit', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (state.ui.proofOpen) ACTIONS.closeModal();
-  else if (state.ui.navOpen) ACTIONS.closeNav();
+  if (state.ui.navOpen) ACTIONS.closeNav();
 });
 
 // ============================================================================ routing + boot
@@ -2213,7 +2140,7 @@ async function boot() {
   state.activeTab = tabFromHash();
   render();
 
-  await Promise.all([loadDemoAccounts(), loadHealth(), refreshSession()]);
+  await Promise.all([loadDemoAccounts(), refreshSession()]);
   if (state.token && !state.user) clearSession();
   state.booting = false;
 

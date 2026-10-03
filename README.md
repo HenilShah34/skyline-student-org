@@ -175,7 +175,7 @@ erDiagram
 | `idx_tasks_campaign_status (campaign_name, status)` | A campaign's board, grouped by status |
 | `idx_ledger_type_category (type, category, created_at)` | Treasurer totals and filters by type, category and date |
 
-`GET /api/system/proof` (staff only; the **🗄 DB & Index Proof** button at the bottom of the sidebar) shows the live `EXPLAIN QUERY PLAN` for each lookup: every one is a `SEARCH … USING INDEX`, none a `SCAN`.
+`GET /api/system/proof` (staff token required; checked by `verify-phase6.js`) returns the live `EXPLAIN QUERY PLAN` for each lookup: every one is a `SEARCH … USING INDEX`, none a `SCAN`.
 
 ---
 
@@ -237,7 +237,7 @@ All five passwords are `skyline123`. On the sign-in page, open **🔑 Quick Fill
 | Join/renew, buy tickets and merch, read announcements | ✓ | ✓ | ✓ | ✓ |
 | Move a bake-sale task | own tasks only | ✓ | ✓ | ✓ |
 | Door lookup and check-in, pickup desk, post announcements, add tasks | | ✓ | ✓ | ✓ |
-| Submit an expense receipt, view the ledger, DB & Index Proof | | ✓ | ✓ | ✓ |
+| Submit an expense receipt, view the ledger, `GET /api/system/proof` | | ✓ | ✓ | ✓ |
 | Approve or reject a reimbursement (never your own) | | | ✓ | ✓ |
 | Record fundraiser income, export the ledger as CSV | | | ✓ | ✓ |
 | Create an event | | | | ✓ |
