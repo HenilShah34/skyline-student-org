@@ -199,6 +199,25 @@ router.patch('/events/:id', requireAuth, requireRole('ADMIN'), requireScope('EVE
   res.json({ event: toEventView(event) });
 });
 
+// Delete an event that hasn't sold a seat. Once seats are sold (online or at the
+// box office) the money is in the ledger and the club has no refund flow, so the
+// event is kept and the Admin is told why.
+router.delete('/events/:id', requireAuth, requireRole('ADMIN'), requireScope('EVENTS'), (req, res) => {
+  const eventId = parseEventId(req.params.id);
+  const deleted = withTransaction(() => {
+    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!event) throw new HttpError(404, 'Event not found');
+    const tickets = db.prepare('SELECT COUNT(*) AS n FROM tickets WHERE event_id = ?').get(eventId).n;
+    const sold = event.total_seats - event.seats_left;
+    if (tickets > 0 || sold > 0) {
+      throw new HttpError(409, `This event has ${sold} seat${sold === 1 ? '' : 's'} sold, so it can't be deleted`, { tickets_sold: tickets, seats_sold: sold });
+    }
+    db.prepare('DELETE FROM events WHERE id = ?').run(eventId);
+    return { id: event.id, title: event.title, event_date: event.event_date };
+  });
+  res.json({ deleted });
+});
+
 function ticketCodeTaken(code) {
   return Boolean(db.prepare('SELECT 1 FROM tickets WHERE ticket_code = ?').get(code));
 }

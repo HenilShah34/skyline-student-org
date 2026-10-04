@@ -47,6 +47,21 @@ async function run() {
   const nonAdmin = await Promise.all([treasurer, volunteer, member].map((token) => api('PATCH', `/api/events/${gala.id}`, { token, body: { title: 'Hijack Night' } })));
   check('capacity below seats sold, empty body or bad date -> 400; unknown event -> 404; non-admins -> 403',
     tooSmall.status === 400 && empty.status === 400 && badDate.status === 400 && ghost.status === 404 && nonAdmin.every((r) => r.status === 403));
+  const draft = await api('POST', '/api/events', {
+    token: admin,
+    body: { title: 'Alumni Mixer', event_date: '2026-12-12T13:00:00.000Z', location: 'Courtyard', total_seats: 40, member_price: 0, guest_price: 100 },
+  });
+  const deleteBy = await Promise.all([treasurer, volunteer, member].map((token) => api('DELETE', `/api/events/${draft.body.event.id}`, { token })));
+  const delGala = await api('DELETE', `/api/events/${gala.id}`, { token: admin });
+  const delDraft = await api('DELETE', `/api/events/${draft.body.event.id}`, { token: admin });
+  const delAgain = await api('DELETE', `/api/events/${draft.body.event.id}`, { token: admin });
+  const delBad = await api('DELETE', '/api/events/abc', { token: admin });
+  check('DELETE /api/events/:id: non-admins -> 403; an event with sold seats -> 409 (kept); an unsold event -> 200; again -> 404; bad id -> 400',
+    deleteBy.every((r) => r.status === 403) && delGala.status === 409 && /can't be deleted/.test(delGala.body.error) &&
+      db.prepare('SELECT 1 FROM events WHERE id = ?').get(gala.id) !== undefined &&
+      delDraft.status === 200 && delDraft.body.deleted.title === 'Alumni Mixer' && !db.prepare('SELECT 1 FROM events WHERE id = ?').get(draft.body.event.id) &&
+      delAgain.status === 404 && delBad.status === 400,
+    `${deleteBy.map((r) => r.status).join(',')}/${delGala.status}/${delDraft.status}/${delAgain.status}/${delBad.status}`);
   const adminTicket = await api('POST', `/api/events/${gala.id}/tickets`, { token: admin });
   const adminOrder = await api('POST', '/api/merch/orders', { token: admin, body: { item_id: 1, size: 'M' } });
   check('admin buying a ticket or merch -> 403 "Admins manage events and inventory and do not purchase tickets or merch"',
@@ -101,11 +116,12 @@ async function run() {
   const inScope = await api('POST', '/api/tasks', { token: volunteer, body: { title: 'Scoped admin task' } });
   const outEvents = await api('POST', '/api/events', { token: volunteer, body: { title: 'Out of scope', event_date: new Date(Date.now() + 864e5).toISOString(), location: 'Hall', total_seats: 5, member_price: 0, guest_price: 0 } });
   const outEdit = await api('PATCH', `/api/events/${gala.id}`, { token: volunteer, body: { title: 'Out of scope edit' } });
+  const outDelete = await api('DELETE', `/api/events/${gala.id}`, { token: volunteer });
   const outMerch = await api('POST', '/api/merch/items', { token: volunteer, body: { name: 'Out of scope', category: 'CAPS', cost_price: 1, member_price: 2, regular_price: 3 } });
   const outRestock = await api('PATCH', '/api/merch/variants/1/restock', { token: volunteer, body: { add_quantity: 1 } });
   check('inside the scope -> 201; events, merch products and restock outside it -> 403 "scoped strictly to: Bake Sale Project"',
-    inScope.status === 201 && [outEvents, outEdit, outMerch, outRestock].every((r) => r.status === 403 && r.body.reason === 'Your admin access is scoped strictly to: Bake Sale Project'),
-    [outEvents, outEdit, outMerch, outRestock].map((r) => r.status).join(','));
+    inScope.status === 201 && [outEvents, outEdit, outDelete, outMerch, outRestock].every((r) => r.status === 403 && r.body.reason === 'Your admin access is scoped strictly to: Bake Sale Project'),
+    [outEvents, outEdit, outDelete, outMerch, outRestock].map((r) => r.status).join(','));
   const me = await api('GET', '/api/auth/me', { token: volunteer });
   const badScope = await api('PATCH', `/api/users/${nehaId}/role`, { token: admin, body: { access_scope: 'EVERYTHING' } });
   const scopeOnly = await api('PATCH', `/api/users/${nehaId}/role`, { token: admin, body: { access_scope: 'ALL' } });

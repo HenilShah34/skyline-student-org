@@ -4,7 +4,7 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
 - **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
-- **Proof:** 8 automated verification suites (257 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Proof:** 8 automated verification suites (258 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -32,7 +32,7 @@ Captured from the running app at 1280×800 with the full 105-user seed (`npm run
 
 | Area | What it does | API |
 |---|---|---|
-| **Event editing** | The Admin edits title, date, venue, prices and capacity inline on each event card. Seats already sold stay sold: `seats_left` moves with `total_seats`, and capacity can't drop below seats sold. | `PATCH /api/events/:id` |
+| **Event editing & deleting** | The Admin creates and edits events with a plain date field plus a start time, and edits title, venue, prices and capacity inline on each card. **🗑 Delete Event** (after a confirmation) removes an event with no seats sold; an event with sales is kept (`409`), because its tickets were paid for and the club has no refund flow. Seats already sold stay sold: `seats_left` moves with `total_seats`, and capacity can't drop below seats sold. | `PATCH /api/events/:id`, `DELETE /api/events/:id` |
 | **Admins don't buy** | The Admin sees an **Admin Report & Analytics View** on events and products instead of Buy/Order buttons, and the server refuses admin purchases (`403`). The Admin's card shows **LIFETIME ADMIN ACCESS · NO EXPIRY**, with no countdown or renewal. | `POST …/tickets`, `POST /api/merch/orders` |
 | **Club hierarchy** | Admin › Treasurer › **Student · Club Member** › Volunteer › **Student (Non-Member)**. A student's label comes from their live membership and is shown on pills, badges and tables. | |
 | **Bake-sale permissions** | Only the Admin and Treasurer create, edit, assign or delete tasks. Only the assigned person (or the Admin) moves a task. | `POST/PATCH/DELETE /api/tasks…` |
@@ -298,7 +298,7 @@ The full seed adds 100 more students (IDs 6–105, same password): 55 **Student 
 | Create, edit, assign and delete bake-sale tasks | | | | ✓ | ✓ |
 | Approve or reject a reimbursement (never your own), record income, export the books | | | | ✓ | ✓ |
 | Merch P&L analytics | | | | ✓ | ✓ |
-| Create and edit events, add and edit products, restock, approve task requests, manage roles | | | | | ✓ |
+| Create, edit and delete events, add and edit products, restock, approve task requests, manage roles | | | | | ✓ |
 
 **Access scope.** The Founding Admin gives every admin or staff member a scope as well as a role:
 
@@ -375,7 +375,7 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 8 suites on better-sqlite3 (257 checks, ~25 s)
+npm run verify:fast          # all 8 suites on better-sqlite3 (258 checks, ~25 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows

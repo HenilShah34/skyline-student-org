@@ -198,12 +198,12 @@ function blankForms() {
     profile: { name: '' },
     password: { current: '', next: '', confirm: '' },
     checkin: { code: '' },
-    event: { title: '', event_date: '', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
+    event: { title: '', event_date: '', event_time: '18:00', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
     announcement: { title: '', content: '', category: 'GENERAL', target_audience: 'ALL' },
     task: { title: '', assigned_to: '', due_date: '', campaign_name: DEFAULT_CAMPAIGN },
     expense: { title: '', category: 'FUNDRAISER_SUPPLIES', amount: '', receipt_reference: '' },
     income: { amount: '', description: '', reference_id: '' },
-    editEvent: { title: '', event_date: '', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
+    editEvent: { title: '', event_date: '', event_time: '18:00', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
     editTask: { title: '', due_date: '' },
     taskRequest: { note: '' },
     product: { name: '', category: 'HOODIES', description: '', cost_price: '', member_price: '', regular_price: '', low_stock_threshold: '5', assigned_manager_id: '', color: '#1e2a4a', S: '10', M: '10', L: '10', XL: '10' },
@@ -497,6 +497,7 @@ function friendlyConflict(error, d) {
   if (/already recorded/.test(error)) return { title: 'Already Recorded', message: `${error}.` };
   if (/already requested|already assigned to you|already done/.test(error)) return { title: 'Already Requested', message: `${error}.` };
   if (/Request already/.test(error)) return { title: 'Already Reviewed', message: `${error}.` };
+  if (/can't be deleted/.test(error)) return { title: 'Event Has Sales', message: `${error}. Tickets were paid for, so the event stays on the books.` };
   if (/email already exists/.test(error)) return { title: 'Email Already Registered', message: 'Sign in instead, or use “Forgot password?” to reset it.' };
   return { title: 'Already Done', message: error || 'Someone else changed this first. The page has been refreshed.' };
 }
@@ -1420,7 +1421,7 @@ function eventCard(e) {
   if (isAdmin()) {
     action = `<div class="admin-view">${badge('📊 Admin Report & Analytics View', 'plum')}
         <span class="small muted">${e.tickets_sold} tickets issued · ${e.checked_in_count} checked in · ${inr(e.ticket_revenue)} online revenue</span></div>
-      ${btn('✏️ Edit Event', 'editEvent', { data: { id: e.id }, variant: 'secondary', size: 'sm', mutation: false })}`;
+      <div class="row">${btn('✏️ Edit Event', 'editEvent', { data: { id: e.id }, variant: 'secondary', size: 'sm', mutation: false })}${deleteEventBtn(e)}</div>`;
   } else if (e.my_ticket) action = `${badge("✓ You're going", 'green')} ${codeChip(e.my_ticket.ticket_code)}`;
   else if (e.is_past) action = badge('Event ended', 'slate');
   else if (soldOut) action = btn('Sold out', 'buyTicket', { data: { id: e.id }, disabled: true, variant: 'secondary' });
@@ -1447,10 +1448,30 @@ function eventCard(e) {
   </article>`;
 }
 
-function toLocalInput(iso) {
+// An event's stored ISO time -> the form's plain date ("2026-10-25") and time ("18:30").
+function toDateAndTime(iso) {
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
+}
+
+// The form's date (+ optional start time, 6 pm by default) -> ISO for the server.
+function eventDateFromForm(f) {
+  if (!f.event_date) return '';
+  const when = new Date(`${f.event_date}T${f.event_time || '18:00'}`);
+  return Number.isNaN(when.getTime()) ? f.event_date : when.toISOString();
+}
+
+// Only an event with no seats sold can be deleted; otherwise the button explains why.
+function deleteEventBtn(e) {
+  const sold = e.seats_sold > 0 || e.tickets_sold > 0;
+  return btn('🗑 Delete Event', 'deleteEvent', {
+    data: { id: e.id },
+    variant: 'danger',
+    size: 'sm',
+    disabled: sold,
+    title: sold ? `${plural(e.seats_sold, 'seat')} already sold: an event with sales can't be deleted` : 'Permanently delete this event',
+  });
 }
 
 function editEventCard(e) {
@@ -1459,14 +1480,15 @@ function editEventCard(e) {
     <form class="card-body form" data-form="editEvent">
       <div class="form-grid">
         ${field('Title', input('forms.editEvent.title'), { span2: true, forId: 'forms-editEvent-title' })}
-        ${field('Date & time', input('forms.editEvent.event_date', { type: 'datetime-local' }), { forId: 'forms-editEvent-event_date' })}
+        ${field('Date', input('forms.editEvent.event_date', { type: 'date' }), { forId: 'forms-editEvent-event_date' })}
+        ${field('Start time', input('forms.editEvent.event_time', { type: 'time' }), { forId: 'forms-editEvent-event_time' })}
         ${field('Location', input('forms.editEvent.location'), { forId: 'forms-editEvent-location' })}
         ${field(`Total seats (min ${e.seats_sold})`, input('forms.editEvent.total_seats', { type: 'number', attrs: `min="${Math.max(1, e.seats_sold)}"` }), { forId: 'forms-editEvent-total_seats' })}
         ${field('Member price (₹)', input('forms.editEvent.member_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-editEvent-member_price' })}
         ${field('Guest price (₹)', input('forms.editEvent.guest_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-editEvent-guest_price' })}
         ${field('Description', textarea('forms.editEvent.description'), { span2: true, forId: 'forms-editEvent-description' })}
       </div>
-      <div class="row">${submitBtn('editEvent', 'Save Changes')}${btn('Cancel', 'cancelEditEvent', { variant: 'secondary', mutation: false })}</div>
+      <div class="row">${submitBtn('editEvent', 'Save Changes')}${btn('Cancel', 'cancelEditEvent', { variant: 'secondary', mutation: false })}${deleteEventBtn(e)}</div>
     </form>
   </article>`;
 }
@@ -1502,7 +1524,8 @@ function createEventForm() {
     <form class="card-body form" data-form="event">
       <div class="form-grid">
         ${field('Title', input('forms.event.title', { placeholder: 'e.g. Winter Cultural Night' }), { forId: 'forms-event-title' })}
-        ${field('Date & time', input('forms.event.event_date', { type: 'datetime-local' }), { forId: 'forms-event-event_date' })}
+        ${field('Date', input('forms.event.event_date', { type: 'date' }), { forId: 'forms-event-event_date' })}
+        ${field('Start time', input('forms.event.event_time', { type: 'time' }), { forId: 'forms-event-event_time' })}
         ${field('Location', input('forms.event.location', { placeholder: 'e.g. Grand Hall' }), { forId: 'forms-event-location' })}
         ${field('Total seats', input('forms.event.total_seats', { type: 'number', attrs: 'min="1"' }), { forId: 'forms-event-total_seats' })}
         ${field('Member price (₹)', input('forms.event.member_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-event-member_price' })}
@@ -2787,10 +2810,28 @@ const ACTIONS = {
     if (!e) return;
     state.ui.editEventId = e.id;
     state.forms.editEvent = {
-      title: e.title, event_date: toLocalInput(e.event_date), location: e.location, total_seats: String(e.total_seats),
+      title: e.title, event_date: toDateAndTime(e.event_date).date, event_time: toDateAndTime(e.event_date).time, location: e.location, total_seats: String(e.total_seats),
       member_price: String(e.member_price), guest_price: String(e.guest_price), description: e.description || '',
     };
     renderMain();
+  },
+  deleteEvent: ({ id }) => {
+    const e = (state.data.events || []).find((ev) => String(ev.id) === String(id));
+    if (!e) return null;
+    return confirmAction({
+      title: 'Delete this event?',
+      message: `Delete “${e.title}” on ${fmtDate(e.event_date)}? This can't be undone.`,
+      confirmLabel: 'Delete Event',
+      tone: 'danger',
+      onConfirm: () => mutate(`deleteEvent:${id}`, 'DELETE', `/api/events/${id}`, undefined, {
+        success: (d) => ({ title: 'Event Deleted', message: `“${d.deleted.title}” was removed.` }),
+        onSuccess: () => {
+          if (String(state.ui.editEventId) === String(id)) state.ui.editEventId = null;
+          if (String(state.ui.deskEventId) === String(id)) state.ui.deskEventId = null;
+        },
+        refresh: () => Promise.all([loadEvents(), loadDesk()]),
+      }),
+    });
   },
   cancelEditEvent: () => {
     state.ui.editEventId = null;
@@ -3057,11 +3098,10 @@ const FORMS = {
   editEvent: () => {
     const f = state.forms.editEvent;
     const id = state.ui.editEventId;
-    const when = new Date(f.event_date);
     return mutate('form:editEvent', 'PATCH', `/api/events/${id}`, {
       title: f.title,
       description: f.description || null,
-      event_date: Number.isNaN(when.getTime()) ? f.event_date : when.toISOString(),
+      event_date: eventDateFromForm(f),
       location: f.location,
       total_seats: toNumber(f.total_seats),
       member_price: toNumber(f.member_price),
@@ -3084,11 +3124,10 @@ const FORMS = {
   }),
   event: () => {
     const f = state.forms.event;
-    const when = new Date(f.event_date);
     return mutate('form:event', 'POST', '/api/events', {
       title: f.title,
       description: f.description || null,
-      event_date: Number.isNaN(when.getTime()) ? f.event_date : when.toISOString(),
+      event_date: eventDateFromForm(f),
       location: f.location,
       total_seats: toNumber(f.total_seats),
       member_price: toNumber(f.member_price),
