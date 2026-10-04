@@ -10,16 +10,21 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 ## Visual tour
 
-Captured from the running app at 1280×800 (light and dark themes) using the seeded demo data.
+Captured from the running app at 1280×800 with the full 105-user seed (`npm run seed -- --reset`), in light and dark themes.
 
 | | |
 |---|---|
-| **Sign-in portal** (light): full-screen sign-in with Quick Fill demo accounts, forgot-email / forgot-password, and the Light/Dark pill | **Overview & Membership** (dark): the Founding Admin's member card, live member pricing and Door Member Lookup |
-| ![Sign-in portal with Quick Fill credentials](docs/screenshots/01-login-portal.png) | ![Overview and membership page in dark mode](docs/screenshots/02-overview-membership-dark.png) |
-| **Events & door check-in** (light): a volunteer scans a ticket; attendance stats, the attendee search and a ticket stub with its real barcode | **Digital Entry Pass** (light): a student's printable pass with tier, check-in status and a scannable Code 128 barcode, opened over the Merch Store |
-| ![Door ticket scanner and check-in desk](docs/screenshots/03-events-ticketing-checkin.png) | ![Digital entry pass modal over the merch store](docs/screenshots/04-merch-store-passes.png) |
-| **Treasurer's books** (dark): What Came In − What Went Out = How Much Is Left, where the money came from, and the four breakdown cards that filter the ledger | |
-| ![Treasurer finance at-a-glance panel in dark mode](docs/screenshots/05-treasurer-finance-at-a-glance.png) | |
+| **Sign-in portal** (light): Quick Fill demo accounts, forgot email / forgot password, Light/Dark pill | **Admin dashboard** (dark): ⚠️ Low Inventory Alert with + Restock Now, and the Admin's *Lifetime Admin Access · No Expiry* card |
+| ![Sign-in portal with Quick Fill credentials](docs/screenshots/01-login-portal.png) | ![Admin overview in dark mode with the low-stock alert and lifetime admin card](docs/screenshots/02-overview-admin-dark.png) |
+| **Door check-in desk** (light): a volunteer's scanner, live attendance stats and the searchable attendee roster | **5-category merch store** (light): 4-angle galleries with hover zoom, seen by a **Student · Club Member** at member prices |
+| ![Door ticket scanner and check-in desk with the attendee roster](docs/screenshots/03-events-checkin-desk.png) | ![Merch store with multi-angle product galleries](docs/screenshots/04-merch-store-gallery.png) |
+| **Zoom lightbox** (light): 1× / 2× / 3× zoom with drag-to-pan, arrow keys and thumbnails for front, back, side and close-up | **Merch P&L + low stock** (light): units sold, revenue, purchase cost, net profit and margin by period, under the low-stock alert |
+| ![Product zoom lightbox at 2x](docs/screenshots/05-merch-zoom-lightbox.png) | ![Merch profit and loss analytics with the low inventory alert](docs/screenshots/06-merch-pnl-low-stock.png) |
+| **Bake-sale task requests** (light): the Admin's queue of member and volunteer requests with Approve & Assign | **105-user directory** (dark): the club hierarchy, search, pages, and a role + access-scope picker per member |
+| ![Pending task requests queue](docs/screenshots/07-bake-sale-task-requests.png) | ![Club access and role management for 105 users](docs/screenshots/08-club-access-directory.png) |
+| **Treasurer's books** (dark): What Came In − What Went Out = How Much Is Left for the whole semester | **Digital Entry Pass** (light): a printable pass with tier, check-in status and a scannable Code 128 barcode |
+| ![Treasurer finance at-a-glance panel in dark mode](docs/screenshots/09-finance-at-a-glance-dark.png) | ![Digital entry pass with barcode](docs/screenshots/10-digital-entry-pass.png) |
+
 
 ---
 
@@ -58,8 +63,8 @@ Captured from the running app at 1280×800 (light and dark themes) using the see
 
 ```
 Browser (public/app.js)            Express 5 (server.js)                         SQLite (skyline.db)
- one state object  ── fetch + ──▶   requireAuth / optionalAuth / requireRole  ──▶ WAL · foreign_keys=ON
- re-fetch after      Bearer         routes/*.js  (validate → withTransaction)     10 tables, 3NF
+ one state object  ── fetch + ──▶   requireAuth → requireRole → requireScope  ──▶ WAL · foreign_keys=ON
+ re-fetch after      Bearer         routes/*.js  (validate → withTransaction)     11 tables, 3NF
  every write         token          lib/*.js     (pricing, codes, ledger)         BEGIN IMMEDIATE writes
  friendly toasts    ◀── JSON ────    HttpError → JSON status codes
 ```
@@ -67,11 +72,11 @@ Browser (public/app.js)            Express 5 (server.js)                        
 | Concern | How it's done | Where |
 |---|---|---|
 | Database safety | `PRAGMA foreign_keys = ON`, `journal_mode = WAL` and `busy_timeout` on every connection; startup fails loudly if foreign keys aren't on. | `db.js` `connect()` |
-| Schema | `CREATE TABLE IF NOT EXISTS` for 10 tables, `CHECK` constraints (`seats_left >= 0`, `stock_count >= 0`, enum columns), plus startup migrations: newer columns are added to older databases, and the `users` table is rebuilt in place (foreign keys checked) to accept the `TREASURER` role. | `db.js` `SCHEMA`, `applySchema()`, `upgradeUserRoles()` |
+| Schema | `CREATE TABLE IF NOT EXISTS` for 11 tables, `CHECK` constraints (`seats_left >= 0`, `stock_count >= 0`, enum columns), plus startup migrations: newer columns are added to older databases, the `users` table is rebuilt in place (foreign keys checked) to accept the `TREASURER` role, and `users.access_scope` plus the merch cost, threshold, manager and gallery columns are added with `ALTER TABLE`. | `db.js` `SCHEMA`, `applySchema()`, `upgradeUserRoles()` |
 | Atomic writes | `withTransaction(fn)`: `BEGIN IMMEDIATE … COMMIT`, `ROLLBACK` on any error, savepoints for nesting, `SQLITE_BUSY` retry with backoff. | `db.js` |
 | Passwords | `scrypt` with a random 16-byte salt (`saltHex:hashHex`), compared with `crypto.timingSafeEqual`. Unknown emails are checked against a dummy hash, so response time doesn't reveal which accounts exist. | `lib/password.js` |
 | Sessions | Stateless tokens: `base64url(JSON payload).HMAC-SHA256`, 7-day expiry. The signature is verified **before** the payload is trusted. | `lib/token.js`, `middleware/requireAuth.js` |
-| Authorization | `requireAuth` (401), `requireRole(...)` (403), plus row-level rules in routes: students move only their own tasks, and nobody (Treasurer or Admin) can review their own claim. The token proves *who* you are; your role is read live from the `users` row on every request, so a promotion or demotion applies on the very next click. | `middleware/`, `routes/` |
+| Authorization | `requireAuth` (401), `requireRole(...)` (403), plus row-level rules in routes: students move only their own tasks, and nobody (Treasurer or Admin) can review their own claim. The token proves *who* you are; your role **and access scope** are read live from the `users` row on every request, so a promotion, demotion or new scope applies on the very next click. `requireScope('EVENTS' \| 'MERCH' \| 'BAKE_SALE' \| 'FINANCE')` keeps a scoped admin or staff member inside their project. | `middleware/`, `routes/` |
 | Account recovery | Forgot email: look an account up by membership code or full name; the email comes back for that account only. Forgot password: email **plus** membership code or full name, a new password of 6+ characters, and an immediate sign-in. A wrong pair and an unknown email get the same `401`. | `server.js` `/api/auth/*` |
 | Pricing | Always recalculated on the server from the live membership row. Prices in request bodies are ignored. | `routes/events.js`, `routes/merch.js` |
 | Input handling | Strict parsers for ids, enums and integers (`400` before any DB work); parameterised SQL everywhere; `LIKE` wildcards escaped; 100 kb JSON limit (`413`). | `lib/http.js` |
@@ -81,7 +86,7 @@ Browser (public/app.js)            Express 5 (server.js)                        
 
 ---
 
-## Data model: 10 tables in third normal form
+## Data model: 11 tables in third normal form
 
 Each fact is stored once. Prices live on `merch_items` while stock lives per size on `merch_variants`; orders point at the exact variant; names are joined in, never copied.
 
@@ -98,6 +103,9 @@ erDiagram
     events ||--o{ tickets : "has"
     merch_items ||--|{ merch_variants : "comes in sizes"
     merch_variants ||--o{ merch_orders : "sold as"
+    users |o--o{ merch_items : "manages inventory"
+    fundraiser_tasks ||--o{ task_requests : "requested via"
+    users ||--o{ task_requests : "asks to take"
 
     users {
         INTEGER id PK
@@ -109,6 +117,7 @@ erDiagram
         TEXT membership_status "NONE | ACTIVE | EXPIRED"
         TEXT membership_expires_at
         TEXT created_at
+        TEXT access_scope "ALL | EVENTS_ONLY | MERCH_ONLY | BAKE_SALE_ONLY | FINANCE_ONLY"
     }
     events {
         INTEGER id PK
@@ -149,6 +158,10 @@ erDiagram
         INTEGER member_price
         INTEGER regular_price
         TEXT created_at
+        INTEGER cost_price "purchase cost per unit"
+        INTEGER low_stock_threshold
+        INTEGER assigned_manager_id FK "nullable"
+        TEXT images_json "gallery style + colour"
     }
     merch_variants {
         INTEGER id PK
@@ -175,6 +188,14 @@ erDiagram
         INTEGER assigned_to FK "nullable"
         TEXT status "TODO | IN_PROGRESS | DONE"
         TEXT due_date
+        TEXT created_at
+    }
+    task_requests {
+        INTEGER id PK
+        INTEGER task_id FK "UNIQUE with user_id"
+        INTEGER user_id FK
+        TEXT note
+        TEXT status "PENDING | APPROVED | REJECTED"
         TEXT created_at
     }
     expense_reimbursements {
@@ -261,26 +282,42 @@ All five passwords are `skyline123`. On the sign-in page, open **🔑 Quick Fill
 | Meera Joshi | `meera@skyline.edu` | Treasurer (`SKY-2026-002`) | Approves or rejects reimbursements, records fundraiser income, exports the books as CSV |
 | Neha Sharma | `neha@skyline.edu` | Volunteer (`SKY-2026-003`) | Door check-in, pickup desk, announcements, task board, submits expense receipts |
 | Rohan Verma | `rohan@skyline.edu` | Student, member expiring in 10 days (`SKY-2026-004`) | Member prices (₹250 Gala, ₹899 hoodie), members-only posts, renewal banner |
-| Kabir Singh | `kabir@skyline.edu` | Student, not a member | Guest prices (₹500 Gala, ₹1,199 hoodie), hidden members-only posts, refused staff actions |
+| Kabir Singh | `kabir@skyline.edu` | Student (Non-Member) | Guest prices (₹500 Gala, ₹1,199 hoodie), hidden members-only posts, refused staff actions, can't request tasks |
 
-**Who can do what.** "Staff" means Volunteer, Treasurer and Admin. Every rule is enforced on the server with `requireRole`; the UI only hides what the server would refuse anyway.
+The full seed adds 100 more students (IDs 6–105, same password): 55 **Student · Club Members** (`SKY-2026-005` … `059`), 30 **Students (Non-Member)** and 15 **Volunteers**, with dues, Gala and workshop tickets, 64 merch orders over the last 120 days, and 3 pending task requests.
 
-| Action | Student | Volunteer | Treasurer | Admin |
-|---|:-:|:-:|:-:|:-:|
-| Join/renew, buy tickets and merch, read announcements | ✓ | ✓ | ✓ | ✓ |
-| See the semester books: at-a-glance panel and ledger (students: others' names masked) | ✓ | ✓ | ✓ | ✓ |
-| Move a bake-sale task | own tasks only | ✓ | ✓ | ✓ |
-| Door lookup and check-in, pickup desk, post announcements, add and assign tasks | | ✓ | ✓ | ✓ |
-| Submit an expense receipt, `GET /api/system/proof` | | ✓ | ✓ | ✓ |
-| Approve or reject a reimbursement (never your own) | | | ✓ | ✓ |
-| Record fundraiser income, export the ledger as CSV | | | ✓ | ✓ |
-| Create an event, delete a task, restock a merch size, manage roles | | | | ✓ |
+**Club hierarchy:** Admin › Treasurer › **Student · Club Member** › Volunteer › **Student (Non-Member)**. A student's label comes from their live membership. Every rule below is enforced on the server (`requireRole`, `requireScope` and row-level checks); the UI only hides what the server would refuse anyway.
+
+| Action | Non-member | Club member | Volunteer | Treasurer | Admin |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Buy tickets and merch, read announcements, see the books (others' names masked for students) | ✓ | ✓ | ✓ | ✓ | view only |
+| Members-only announcements, member prices | | ✓ | ✓ | ✓ | ✓ |
+| Request a bake-sale task (✋) | | ✓ | ✓ | ✓ | |
+| Move a bake-sale task | own | own | own | own | ✓ |
+| Door lookup and check-in, pickup desk, post announcements, submit expense receipts | | | ✓ | ✓ | ✓ |
+| Create, edit, assign and delete bake-sale tasks | | | | ✓ | ✓ |
+| Approve or reject a reimbursement (never your own), record income, export the books | | | | ✓ | ✓ |
+| Merch P&L analytics | | | | ✓ | ✓ |
+| Create and edit events, add and edit products, restock, approve task requests, manage roles | | | | | ✓ |
+
+**Access scope.** The Founding Admin gives every admin or staff member a scope as well as a role:
+
+| Scope | May manage | Refused outside it with |
+|---|---|---|
+| `ALL` (Full Club Access) | everything their role allows | — |
+| `EVENTS_ONLY` | events, editing, door check-in | `403 "Your admin access is scoped strictly to: Events Project"` |
+| `MERCH_ONLY` | products, restock, pickup desk | `… Merch Store` |
+| `BAKE_SALE_ONLY` | tasks, assignments, task requests | `… Bake Sale Project` |
+| `FINANCE_ONLY` | reimbursement review, income, CSV export | `… Finance & Books` |
+
+An item's **inventory manager** may restock that item even without an admin role.
 
 ### Club access and the Founding Admin
 
 Admins manage roles from the **🛡️ Club Access & Role Management** table on the Overview tab (`GET /api/users`, `PATCH /api/users/:id/role`).
 
 - **The Founding Admin** (the first account, Vikram) is at the top. Nobody can change this account's role, and only this account can grant Admin or change another Admin.
+- **Roles and scopes together:** each row of the 105-member table (searchable, 12 per page, sorted by hierarchy) has a role picker and a scope picker. **Update Access** asks for confirmation, then calls `PATCH /api/users/:id/role` with `{ role, access_scope }`.
 - **A second Admin** can move members between Student, Volunteer and Treasurer. Trying to grant or change Admin is refused with *"Only the Founding Admin can grant or modify Admin access. You may assign Student, Volunteer, or Treasurer roles."* The table shows the Admin option as disabled with that note.
 - **Nobody can change their own role**, not even the Founding Admin.
 - Because roles are read live, a promoted volunteer gets staff access, and a demoted one loses it, on their next request without signing out.
@@ -289,8 +326,10 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 
 - **Every direction:** To do → **Start Task →**; In progress → **← Move to To Do** or **Mark Done ✓**; Done → **← Move to In Progress** or **↺ Reopen to To Do**.
 - **Unassigned guard:** `PATCH /api/tasks/:id/status` refuses to start or finish a task with nobody assigned (`409`, *"Please assign a volunteer or member to this task before starting or completing it"*). Unassigning a task that is in progress is refused the same way.
-- **Inline assign:** staff pick or change the assignee from a dropdown on each card. The same endpoint takes `{ assigned_to }`, `{ status }`, or both.
-- **Admin delete:** `DELETE /api/tasks/:id` (Admin only) removes a task and returns the updated `campaigns_summary`.
+- **Who moves a task:** only the person it's assigned to, or the Admin (anyone else gets `403`).
+- **Inline assign and edit:** the Admin and Treasurer pick or change the assignee from a dropdown on each card, and edit the title and due date in place (`PATCH /api/tasks/:id`).
+- **Request → approve:** club members and volunteers press **✋ Request to Take This Task** with a short note (`POST /api/tasks/:id/request`; asking twice gets `409`). The Admin's **Pending Task Requests** queue has **Approve & Assign**. In one transaction that marks the request approved, assigns the task, and rejects the other pending requests for it (`PATCH /api/tasks/requests/:id/review`).
+- **Delete:** `DELETE /api/tasks/:id` (Admin or Treasurer, after a confirmation dialog) returns the updated `campaigns_summary`.
 
 ### Semester money at a glance
 
