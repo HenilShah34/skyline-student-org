@@ -930,7 +930,7 @@ function accessPanel() {
     ? 'As the Founding Admin you can grant any role, including Admin. Changes apply on the member’s very next click; no sign-out needed.'
     : 'You can move members between Student, Volunteer and Treasurer. Only the Founding Admin can grant or change Admin access.';
   return `<section class="card">
-    <div class="card-head"><h2>🛡️ Club Access & Role Management ${badge('Admin', 'plum')}</h2><span class="sub">${plural(data.count, 'member')} · PATCH /api/users/:id/role</span></div>
+    <div class="card-head"><h2>🛡️ Club Access & Role Management ${badge('Admin', 'plum')}</h2><span class="sub">${plural(data.count, 'member')} · changes apply on their next click</span></div>
     <div class="card-body"><div class="note note-plum">${note}</div></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Member</th><th>Code</th><th>Membership</th><th>Current role</th><th>Change access</th></tr></thead>
@@ -1197,7 +1197,7 @@ function lookupPanel() {
     : `<tr><td colspan="6">${emptyState('🔍', data ? 'No one matches that search.' : 'Loading…')}</td></tr>`;
 
   return `<section class="card">
-    <div class="card-head"><h2>🚪 Door Member Lookup ${badge('Staff', 'teal')}</h2><span class="sub">GET /api/memberships/lookup</span></div>
+    <div class="card-head"><h2>🚪 Door Member Lookup ${badge('Door Verification', 'teal')}</h2><span class="sub">Search by name, email or member code</span></div>
     <div class="card-body">
       ${input('ui.lookupQuery', { id: 'lookup-q', placeholder: 'Search by name, email or SKY-2026-XXX…', cls: 'input-search input-lg', attrs: 'data-search="lookup" autocomplete="off" aria-label="Search members"' })}
       <div class="small muted mt-8">${status}</div>
@@ -1288,7 +1288,7 @@ function myTickets(mine) {
 
 function createEventForm() {
   return `<section class="card">
-    <div class="card-head"><h2>🗓️ Create Event ${badge('Admin', 'plum')}</h2><span class="sub">POST /api/events</span></div>
+    <div class="card-head"><h2>🗓️ Create Event ${badge('Admin', 'plum')}</h2><span class="sub">Publish a new event with member and guest prices</span></div>
     <form class="card-body form" data-form="event">
       <div class="form-grid">
         ${field('Title', input('forms.event.title', { placeholder: 'e.g. Winter Cultural Night' }), { forId: 'forms-event-title' })}
@@ -1487,7 +1487,7 @@ function restockControl(item) {
   const qty = state.ui.restockQty[item.id] ?? '10';
   const options = item.variants.map((v) => `<option value="${v.variant_id}"${v.variant_id === variantId ? ' selected' : ''}>${esc(v.size)} · ${v.stock_count === 0 ? 'sold out' : `${v.stock_count} left`}</option>`).join('');
   return `<div class="restock">
-      <div class="row-between"><span class="small strong">🛠 Admin restock</span><span class="small muted">PATCH /api/merch/variants/:id/restock</span></div>
+      <div class="row-between"><span class="small strong">🛠 Admin restock</span><span class="small muted">Adds stock to one size</span></div>
       <div class="restock-row">
         <select id="restock-size-${item.id}" class="select select-sm" data-model="ui.restockVariant.${item.id}" data-rerender="1" aria-label="Size to restock for ${esc(item.name)}"${state.isLoading ? ' disabled' : ''}>${options}</select>
         <input id="restock-qty-${item.id}" class="input select-sm restock-qty" type="number" min="1" max="500" step="1" value="${esc(qty)}" data-model="ui.restockQty.${item.id}" data-rerender="1" aria-label="Units to add">
@@ -1538,7 +1538,7 @@ function pickupQueue() {
     : `<tr><td colspan="9">${emptyState('📦', data ? 'No orders match.' : 'Loading…')}</td></tr>`;
 
   return `<section class="card">
-    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Staff', 'teal')}</h2><span class="sub">PATCH /api/merch/orders/:code/pickup records who handed it over and when</span></div>
+    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Staff', 'teal')}</h2><span class="sub">Each handover records who gave it out and when</span></div>
     <div class="card-body stack" style="gap:14px">
       <div class="kpis">
         ${kpi('Orders', s ? s.total_orders : '—')}
@@ -1651,7 +1651,7 @@ function taskCard(t) {
 function addTaskForm(campaigns) {
   const people = [['', 'Unassigned'], ...(state.data.assignees || []).map((u) => [u.id, `${u.name} (${roleLabel(u.role)})`])];
   return `<section class="card">
-    <div class="card-head"><h2>➕ Add Task ${badge('Staff', 'teal')}</h2><span class="sub">POST /api/tasks · new tasks start in To do</span></div>
+    <div class="card-head"><h2>➕ Add Task ${badge('Staff', 'teal')}</h2><span class="sub">New tasks start in To do</span></div>
     <form class="card-body form" data-form="task">
       <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         ${field('Task', input('forms.task.title', { placeholder: 'e.g. Print price labels' }), { forId: 'forms-task-title' })}
