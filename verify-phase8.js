@@ -13,7 +13,9 @@ const { check, section, summarize, tempDbPath, removeDb, startServer, stopServer
 
 const DB_FILE = tempDbPath('verify8');
 const FULL_DB = tempDbPath('verify8-full');
+const UPLOADS = `${DB_FILE}-uploads`;
 process.env.DB_PATH = DB_FILE; // must be set before ./db is required
+process.env.UPLOAD_DIR = UPLOADS; // the test server stores product photos here
 
 let server = null;
 let db = null;
@@ -175,6 +177,53 @@ async function run() {
   check('7-day window is a subset of all time; bad period -> 400; students -> 403',
     week.status === 200 && week.body.totals.units_sold <= pnl.body.totals.units_sold && badPeriod.status === 400 && studentPnl.status === 403);
 
+  // ------------------------------------------------------------ product photo uploads
+  section('Product photo uploads');
+  // A real 1×1 PNG, and fakes that only claim to be images.
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const fakePng = `data:image/png;base64,${Buffer.from('<script>alert(1)</script>').toString('base64')}`;
+  const svg = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`;
+  const withPhotos = await api('POST', '/api/merch/items', {
+    token: admin,
+    body: { name: 'Skyline Photo Tee', category: 'T_SHIRTS', cost_price: 150, member_price: 299, regular_price: 399, photos: [{ data: PNG, label: 'Front View' }, { data: PNG, label: 'Back View' }] },
+  });
+  const listed = (await api('GET', '/api/merch/items', { token: member })).body.items.find((i) => i.name === 'Skyline Photo Tee');
+  const firstUrl = listed?.gallery.angles[0].url;
+  const served = firstUrl ? await fetch(`http://127.0.0.1:${server.port}${firstUrl}`) : null;
+  const servedBytes = served ? Buffer.from(await served.arrayBuffer()) : Buffer.alloc(0);
+  check('Admin creates a product with 2 uploaded photos -> 201; the gallery shows them (not the artwork) and the file is served as image/png',
+    withPhotos.status === 201 && listed.gallery.uploaded === true && listed.gallery.angles.length === 2 &&
+      listed.gallery.angles.map((a) => a.label).join() === 'Front View,Back View' && /^\/uploads\/merch\/[a-f0-9]{24}\.png$/.test(firstUrl) &&
+      served.status === 200 && served.headers.get('content-type') === 'image/png' && served.headers.get('x-content-type-options') === 'nosniff' &&
+      servedBytes.equals(Buffer.from(PNG.split(',')[1], 'base64')),
+    firstUrl);
+  const files = () => (fs.existsSync(path.join(UPLOADS, 'merch')) ? fs.readdirSync(path.join(UPLOADS, 'merch')).length : 0);
+  const before = files();
+  const rejected = await Promise.all([
+    [{ data: fakePng }], [{ data: svg }], [{ data: 'not an image' }], Array.from({ length: 5 }, () => ({ data: PNG })), [{ url: '/uploads/merch/../../db.js' }],
+  ].map((photos) => api('POST', '/api/merch/items', { token: admin, body: { name: 'Bad Photo Item', category: 'CAPS', cost_price: 1, member_price: 1, regular_price: 1, photos } })));
+  check('fake PNG, SVG, non-image, 5 photos or a path-like url -> 400, and nothing is written to disk',
+    rejected.every((r) => r.status === 400) && files() === before, rejected.map((r) => r.status).join(','));
+  const studentUpload = await api('POST', '/api/merch/items', { token: member, body: { name: 'Nope', category: 'CAPS', cost_price: 1, member_price: 1, regular_price: 1, photos: [{ data: PNG }] } });
+  check('a student uploading -> 403', studentUpload.status === 403);
+  const keepOne = await api('PATCH', `/api/merch/items/${withPhotos.body.item.id}`, {
+    token: admin,
+    body: { photos: [{ url: listed.gallery.angles[1].url, label: 'Front View' }, { data: PNG, label: 'Detail' }] },
+  });
+  const firstGone = !fs.existsSync(path.join(UPLOADS, 'merch', path.basename(firstUrl)));
+  check('editing: keep one, drop one, add one -> 200; the dropped file is deleted from disk',
+    keepOne.status === 200 && keepOne.body.gallery.photos.length === 2 && keepOne.body.gallery.photos[0].url === listed.gallery.angles[1].url &&
+      keepOne.body.gallery.photos[1].label === 'Detail' && firstGone);
+  const recolour = await api('PATCH', `/api/merch/items/${withPhotos.body.item.id}`, { token: admin, body: { color: '#112233' } });
+  const foreignUrl = await api('PATCH', '/api/merch/items/1', { token: admin, body: { photos: [{ url: keepOne.body.gallery.photos[0].url }] } });
+  check("changing only the colour keeps the photos; another product's photo can't be attached -> 400",
+    recolour.status === 200 && recolour.body.gallery.photos.length === 2 && foreignUrl.status === 400);
+  const clear = await api('PATCH', `/api/merch/items/${withPhotos.body.item.id}`, { token: admin, body: { photos: [] } });
+  check('removing every photo -> back to the generated 4-angle artwork, files deleted',
+    clear.status === 200 && clear.body.gallery.uploaded === false && clear.body.gallery.angles.length === 4 && files() === 0);
+  const notServed = await fetch(`http://127.0.0.1:${server.port}/uploads/`);
+  check('the uploads folder has no directory listing', notServed.status === 404);
+
   // ------------------------------------------------------------ client-side CSV + shortcut
   section('Client-side CSV exports and the "/" search shortcut');
   const app = fs.readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8');
@@ -237,6 +286,7 @@ async function main() {
     }
     if (db) db.close();
     removeDb(DB_FILE);
+    fs.rmSync(UPLOADS, { recursive: true, force: true });
   }
   summarize();
 }

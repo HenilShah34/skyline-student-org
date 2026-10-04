@@ -4,7 +4,7 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
 - **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
-- **Proof:** 8 automated verification suites (258 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Proof:** 8 automated verification suites (265 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -38,7 +38,7 @@ Captured from the running app at 1280×800 with the full 105-user seed (`npm run
 | **Bake-sale permissions** | Only the Admin and Treasurer create, edit, assign or delete tasks. Only the assigned person (or the Admin) moves a task. | `POST/PATCH/DELETE /api/tasks…` |
 | **Task requests** | Club members and volunteers press **✋ Request to Take This Task** with a note. The Admin's **Pending Task Requests** queue has **Approve & Assign**, which assigns the task and rejects the other pending requests for it, in one transaction. | `POST /api/tasks/:id/request`, `PATCH /api/tasks/requests/:id/review` |
 | **Scoped access** | The Founding Admin gives each person a role **and** an access scope: Full Club, Events, Merch, Bake Sale or Finance only. Outside it the server answers `403 "Your admin access is scoped strictly to: …"`. | `PATCH /api/users/:id/role` (`access_scope`), `requireScope()` |
-| **5-category merch** | Hoodies, T-Shirts, Caps, Pants / Joggers and Accessories, each with cost price, low-stock threshold, inventory manager and a 4-angle gallery (front, back, side, close-up). Hover zooms inside the photo; a click opens a lightbox with 1× / 2× / 3× zoom, drag-to-pan, wheel zoom and arrow keys. | `POST/PATCH /api/merch/items` |
+| **5-category merch** | Hoodies, T-Shirts, Caps, Pants / Joggers and Accessories, each with cost price, low-stock threshold, inventory manager and a 4-angle gallery (front, back, side, close-up). When adding or editing a product the Admin can **upload up to 4 real photos** (PNG, JPG or WebP), choosing each one's angle label and order (the first is the cover). Photos are resized in the browser to 1200 px, checked on the server against their real file type (no SVG or disguised files), saved under `uploads/` (git-ignored) and served with `nosniff`. Products without photos use generated artwork for the category. Hover zooms inside the photo; a click opens a lightbox with 1× / 2× / 3× zoom, drag-to-pan, wheel zoom and arrow keys. | `POST/PATCH /api/merch/items` |
 | **Low-stock alerts** | Any size at or below its threshold appears in a **⚠️ Low Inventory Alert** on the Admin's and the item manager's dashboard, with **+ Restock Now**. A manager can restock their own items. | `GET /api/merch/items` (`low_stock`) |
 | **Profit & loss** | Units sold, revenue, purchase cost (cost price × units), net profit and margin per product, ranked by units sold, for the last 7, 30 or 90 days or all time. Shown on the Merch and Finance pages for the Admin and Treasurer. | `GET /api/merch/analytics?period=7d\|30d\|90d\|all` |
 | **Confirmation dialogs** | Sign Out, Save Name, Update Password, Update Access and Delete Task each ask "are you sure?" first. | |
@@ -375,7 +375,7 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 8 suites on better-sqlite3 (258 checks, ~25 s)
+npm run verify:fast          # all 8 suites on better-sqlite3 (265 checks, ~25 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows
@@ -410,6 +410,7 @@ public/                   index.html · styles.css · app.js (the whole UI, incl
 verify-*.js               Verification suites (verify-all.js runs them)
 proof-*.js                Live terminal demos
 docs/screenshots/         README visual tour (1280×800 PNG)
+uploads/merch/            Uploaded product photos (created on first upload, git-ignored)
 ```
 
 ## Configuration
@@ -418,6 +419,7 @@ docs/screenshots/         README visual tour (1280×800 PNG)
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
 | `DB_PATH` | `./skyline.db` | SQLite file |
+| `UPLOAD_DIR` | `./uploads` | Where uploaded product photos are stored |
 | `TOKEN_SECRET` | built-in development secret | HMAC key for login tokens. **Set this in any real deployment.** |
 | `SQLITE_DRIVER` | `better-sqlite3` | Set to `node` to force the built-in `node:sqlite` driver |
 | `DEMO_ACCOUNTS` | on | Set to `off` to hide the demo-accounts endpoint and the Quick Fill card |

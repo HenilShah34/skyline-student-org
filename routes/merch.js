@@ -4,6 +4,7 @@ const express = require('express');
 const { db, withTransaction } = require('../db');
 const { HttpError, validationFailed, parseInteger, parsePositiveInt, parseSearchQuery, escapeLike } = require('../lib/http');
 const { uniqueCode } = require('../lib/codes');
+const { MAX_PHOTOS, decodeImage, saveImage, removeImage, isUploadUrl } = require('../lib/uploads');
 const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
@@ -38,7 +39,48 @@ function galleryOf(item) {
     stored = null;
   }
   const style = stored?.style || CATEGORY_STYLE[item.category] || (/cap/i.test(item.name) ? 'cap' : /hoodie/i.test(item.name) ? 'hoodie' : 'tee');
-  return { style, color: stored?.color || '#1e2a4a', angles: ANGLES };
+  const photos = Array.isArray(stored?.photos) ? stored.photos.filter((p) => isUploadUrl(p.url)) : [];
+  return {
+    style,
+    color: stored?.color || '#1e2a4a',
+    photos,
+    uploaded: photos.length > 0,
+    angles: photos.length ? photos.map((p) => ({ view: 'photo', label: p.label, url: p.url })) : ANGLES,
+  };
+}
+
+const MAX_LABEL = 40;
+
+// photos: [{ data: 'data:image/...' } | { url: '/uploads/merch/…' }, label?] (max 4).
+// New images are decoded and checked here; files are written only after validation passes.
+function readPhotos(value, details) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_PHOTOS) {
+    details.photos = `photos must be a list of at most ${MAX_PHOTOS} images`;
+    return undefined;
+  }
+  return value.map((p, i) => {
+    const label = typeof p?.label === 'string' && p.label.trim() ? p.label.trim().slice(0, MAX_LABEL) : (ANGLES[i]?.label || `Photo ${i + 1}`);
+    if (p?.url !== undefined) {
+      if (!isUploadUrl(p.url)) details[`photos_${i}`] = `photo ${i + 1} must be a new image or one of this product's current photos`;
+      return { url: p.url, label };
+    }
+    const image = decodeImage(p?.data);
+    if (image.error) details[`photos_${i}`] = `photo ${i + 1} ${image.error}`;
+    return { image, label };
+  });
+}
+
+// Writes the new images to disk; returns the stored list and the files written.
+function persistPhotos(photos) {
+  const written = [];
+  const stored = photos.map((p) => {
+    if (p.url) return { url: p.url, label: p.label };
+    const url = saveImage(p.image);
+    written.push(url);
+    return { url, label: p.label };
+  });
+  return { stored, written };
 }
 
 const router = express.Router();
@@ -382,6 +424,7 @@ function readItemInput(body, { partial = false } = {}) {
   if (body.assigned_manager_id != null && body.assigned_manager_id !== '' && !(out.managerId > 0)) details.assigned_manager_id = 'assigned_manager_id must be a user id';
   out.color = body.color === undefined ? '#1e2a4a' : text(body.color);
   if (body.color !== undefined && !COLOR_RE.test(out.color)) details.color = 'color must be a hex colour like #1e2a4a';
+  out.photos = readPhotos(body.photos, details);
   if (!partial) {
     out.stock = {};
     for (const size of SIZES) {
@@ -401,19 +444,27 @@ function assertManager(id) {
 // Add a product with its four sizes in one transaction.
 router.post('/items', requireAuth, requireRole('ADMIN'), requireScope('MERCH'), (req, res) => {
   const input = readItemInput(req.body || {});
-  const itemId = withTransaction(() => {
-    assertManager(input.managerId);
-    const gallery = JSON.stringify({ style: CATEGORY_STYLE[input.category], color: input.color });
-    const { lastInsertRowid } = db
-      .prepare(`
-        INSERT INTO merch_items (name, description, category, member_price, regular_price, created_at, cost_price, low_stock_threshold, assigned_manager_id, images_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(input.name, input.description, input.category, input.memberPrice, input.regularPrice, new Date().toISOString(),
-        input.costPrice, input.threshold, input.managerId, gallery);
-    const insertVariant = db.prepare('INSERT INTO merch_variants (item_id, size, stock_count) VALUES (?, ?, ?)');
-    for (const size of SIZES) insertVariant.run(lastInsertRowid, size, input.stock[size]);
-    return Number(lastInsertRowid);
-  });
+  if (input.photos?.some((p) => p.url)) throw validationFailed({ photos: 'a new product can only have newly uploaded photos' });
+  const { stored, written } = persistPhotos(input.photos || []);
+  let itemId;
+  try {
+    itemId = withTransaction(() => {
+      assertManager(input.managerId);
+      const gallery = JSON.stringify({ style: CATEGORY_STYLE[input.category], color: input.color, photos: stored });
+      const { lastInsertRowid } = db
+        .prepare(`
+          INSERT INTO merch_items (name, description, category, member_price, regular_price, created_at, cost_price, low_stock_threshold, assigned_manager_id, images_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.name, input.description, input.category, input.memberPrice, input.regularPrice, new Date().toISOString(),
+          input.costPrice, input.threshold, input.managerId, gallery);
+      const insertVariant = db.prepare('INSERT INTO merch_variants (item_id, size, stock_count) VALUES (?, ?, ?)');
+      for (const size of SIZES) insertVariant.run(lastInsertRowid, size, input.stock[size]);
+      return Number(lastInsertRowid);
+    });
+  } catch (err) {
+    written.forEach(removeImage);
+    throw err;
+  }
   res.status(201).json({ item: db.prepare('SELECT * FROM merch_items WHERE id = ?').get(itemId), variants: db.prepare('SELECT * FROM merch_variants WHERE item_id = ?').all(itemId) });
 });
 
@@ -422,27 +473,48 @@ router.patch('/items/:id', requireAuth, requireRole('ADMIN'), requireScope('MERC
   const id = parsePositiveInt(req.params.id);
   if (!id) throw validationFailed({ id: 'Item id must be a positive integer' });
   const input = readItemInput(req.body || {}, { partial: true });
-  const item = withTransaction(() => {
-    const current = db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
-    if (!current) throw new HttpError(404, 'Item not found');
-    if (input.sent('assigned_manager_id')) assertManager(input.managerId);
-    const pick = (field, key) => (input.sent(field) ? input[key] : current[field]);
-    const memberPrice = pick('member_price', 'memberPrice');
-    const regularPrice = pick('regular_price', 'regularPrice');
-    if (memberPrice > regularPrice) throw validationFailed({ member_price: 'member_price cannot be higher than regular_price' });
-    const category = pick('category', 'category');
-    const gallery = input.sent('color') || input.sent('category')
-      ? JSON.stringify({ style: CATEGORY_STYLE[category] || galleryOf(current).style, color: input.sent('color') ? input.color : galleryOf(current).color })
-      : current.images_json;
-    db.prepare(`
-      UPDATE merch_items SET name = ?, description = ?, category = ?, cost_price = ?, member_price = ?, regular_price = ?,
-                             low_stock_threshold = ?, assigned_manager_id = ?, images_json = ?
-      WHERE id = ?`)
-      .run(pick('name', 'name'), pick('description', 'description'), category, pick('cost_price', 'costPrice'), memberPrice, regularPrice,
-        pick('low_stock_threshold', 'threshold'), input.sent('assigned_manager_id') ? input.managerId : current.assigned_manager_id, gallery, id);
-    return db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
-  });
-  res.json({ item });
+  const { stored, written } = persistPhotos(input.photos || []);
+  let removed = [];
+  let item;
+  try {
+    item = withTransaction(() => {
+      const current = db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
+      if (!current) throw new HttpError(404, 'Item not found');
+      const before = galleryOf(current);
+      if (input.photos) {
+        const mine = new Set(before.photos.map((p) => p.url));
+        const foreign = input.photos.filter((p) => p.url && !mine.has(p.url));
+        if (foreign.length) throw validationFailed({ photos: "kept photos must be this product's current photos" });
+        const keep = new Set(stored.map((p) => p.url));
+        removed = before.photos.map((p) => p.url).filter((url) => !keep.has(url));
+      }
+      if (input.sent('assigned_manager_id')) assertManager(input.managerId);
+      const pick = (field, key) => (input.sent(field) ? input[key] : current[field]);
+      const memberPrice = pick('member_price', 'memberPrice');
+      const regularPrice = pick('regular_price', 'regularPrice');
+      if (memberPrice > regularPrice) throw validationFailed({ member_price: 'member_price cannot be higher than regular_price' });
+      const category = pick('category', 'category');
+      const gallery = input.sent('color') || input.sent('category') || input.photos
+        ? JSON.stringify({
+          style: CATEGORY_STYLE[category] || before.style,
+          color: input.sent('color') ? input.color : before.color,
+          photos: input.photos ? stored : before.photos,
+        })
+        : current.images_json;
+      db.prepare(`
+        UPDATE merch_items SET name = ?, description = ?, category = ?, cost_price = ?, member_price = ?, regular_price = ?,
+                               low_stock_threshold = ?, assigned_manager_id = ?, images_json = ?
+        WHERE id = ?`)
+        .run(pick('name', 'name'), pick('description', 'description'), category, pick('cost_price', 'costPrice'), memberPrice, regularPrice,
+          pick('low_stock_threshold', 'threshold'), input.sent('assigned_manager_id') ? input.managerId : current.assigned_manager_id, gallery, id);
+      return db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
+    });
+  } catch (err) {
+    written.forEach(removeImage);
+    throw err;
+  }
+  removed.forEach(removeImage); // photos the admin took off the product
+  res.json({ item, gallery: galleryOf(item) });
 });
 
 // Profit & loss per product for a period, ranked by units sold.

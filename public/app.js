@@ -206,7 +206,7 @@ function blankForms() {
     editEvent: { title: '', event_date: '', event_time: '18:00', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
     editTask: { title: '', due_date: '' },
     taskRequest: { note: '' },
-    product: { name: '', category: 'HOODIES', description: '', cost_price: '', member_price: '', regular_price: '', low_stock_threshold: '5', assigned_manager_id: '', color: '#1e2a4a', S: '10', M: '10', L: '10', XL: '10' },
+    product: { name: '', category: 'HOODIES', description: '', cost_price: '', member_price: '', regular_price: '', low_stock_threshold: '5', assigned_manager_id: '', color: '#1e2a4a', S: '10', M: '10', L: '10', XL: '10', photos: [] },
   };
 }
 
@@ -1672,18 +1672,29 @@ function viewMerch() {
   </div>`;
 }
 
+const PHOTO_LABELS = ['Front View', 'Back View', 'Side Profile', 'Fabric & Stitch Close-Up', 'Lifestyle Shot', 'Detail'];
+const MAX_PHOTOS = 4;
+const PHOTO_MAX_EDGE = 1200; // px; photos are resized in the browser before upload
+
+// An angle is either an uploaded photo (url) or generated artwork for the category.
+function angleImage(g, a) {
+  return a.url
+    ? `<img src="${esc(a.url)}" alt="${esc(a.label)}" loading="lazy" draggable="false">`
+    : productArt(g.style, a.view, g.color);
+}
+
 // Front / back / side / close-up viewer: hover to zoom inside the frame, click for the lightbox.
 function productGallery(item) {
   const g = item.gallery || { style: /hoodie/i.test(item.name) ? 'hoodie' : 'tee', color: '#1e2a4a', angles: DEFAULT_ANGLES };
   const angles = g.angles || DEFAULT_ANGLES;
   const i = Math.min(state.ui.galleryAngle[item.id] || 0, angles.length - 1);
-  const thumbs = angles.map((a, n) => `<button type="button" class="thumb${n === i ? ' active' : ''}" data-action="galleryAngle" data-item="${item.id}" data-index="${n}" aria-label="${esc(a.label)}" title="${esc(a.label)}">${productArt(g.style, a.view, g.color)}</button>`).join('');
+  const thumbs = angles.map((a, n) => `<button type="button" class="thumb${n === i ? ' active' : ''}" data-action="galleryAngle" data-item="${item.id}" data-index="${n}" aria-label="${esc(a.label)}" title="${esc(a.label)}">${angleImage(g, a)}</button>`).join('');
   return `<div class="gallery">
     <div class="zoom-stage" data-action="openLightbox" data-item="${item.id}" data-index="${i}" title="Hover to zoom · click for full-screen zoom">
-      <div class="zoom-img">${productArt(g.style, angles[i].view, g.color)}</div>
+      <div class="zoom-img">${angleImage(g, angles[i])}</div>
       <button type="button" class="gal-arrow prev" data-action="galleryStep" data-item="${item.id}" data-step="-1" aria-label="Previous angle">‹</button>
       <button type="button" class="gal-arrow next" data-action="galleryStep" data-item="${item.id}" data-step="1" aria-label="Next angle">›</button>
-      <span class="gal-label">${esc(angles[i].label)} · ${i + 1}/${angles.length}</span>
+      <span class="gal-label">${g.uploaded ? '📷 ' : ''}${esc(angles[i].label)} · ${i + 1}/${angles.length}</span>
       <span class="gal-hint">🔍 Hover to zoom</span>
     </div>
     <div class="thumbs">${thumbs}</div>
@@ -1699,14 +1710,14 @@ function lightboxModal() {
   const g = item.gallery;
   const angles = g.angles || DEFAULT_ANGLES;
   const a = angles[lb.index];
-  const thumbs = angles.map((x, n) => `<button type="button" class="thumb${n === lb.index ? ' active' : ''}" data-action="lightboxIndex" data-index="${n}" aria-label="${esc(x.label)}">${productArt(g.style, x.view, g.color)}</button>`).join('');
+  const thumbs = angles.map((x, n) => `<button type="button" class="thumb${n === lb.index ? ' active' : ''}" data-action="lightboxIndex" data-index="${n}" aria-label="${esc(x.label)}">${angleImage(g, x)}</button>`).join('');
   return `<div class="pass-backdrop" data-action="closeLightbox" data-self="1">
     <div class="lb-dialog" role="dialog" aria-modal="true" aria-label="${esc(item.name)} photo viewer">
       <div class="lb-head"><div><b>${esc(item.name)}</b><div class="small muted">${esc(a.label)} · ${lb.index + 1}/${angles.length}</div></div>
         <div class="lb-zoom">${[1, 2, 3].map((z) => `<button type="button" class="pill${lb.zoom === z ? ' active' : ''}" data-action="lightboxZoom" data-zoom="${z}">${z}×</button>`).join('')}</div>
         <button type="button" class="icon-btn lb-close" data-action="closeLightbox" aria-label="Close">×</button></div>
       <div class="lb-stage${lb.zoom > 1 ? ' pannable' : ''}">
-        <div class="lb-img" style="transform: translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lb.zoom})">${productArt(g.style, a.view, g.color)}</div>
+        <div class="lb-img" style="transform: translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lb.zoom})">${angleImage(g, a)}</div>
         <button type="button" class="gal-arrow prev" data-action="lightboxStep" data-step="-1" aria-label="Previous angle">‹</button>
         <button type="button" class="gal-arrow next" data-action="lightboxStep" data-step="1" aria-label="Next angle">›</button>
       </div>
@@ -1770,6 +1781,68 @@ function merchAnalyticsPanel() {
   </section>`;
 }
 
+// Upload up to 4 real photos, or leave it empty to use the generated artwork.
+function photoUploader() {
+  const photos = state.forms.product.photos || [];
+  const tiles = photos.map((p, i) => `<div class="photo-tile">
+      <img src="${esc(p.url || p.data)}" alt="${esc(p.label)}">
+      <select class="select select-sm" id="photo-label-${i}" data-model="forms.product.photos.${i}.label" aria-label="Angle for photo ${i + 1}">
+        ${PHOTO_LABELS.map((l) => `<option value="${esc(l)}"${l === p.label ? ' selected' : ''}>${esc(l)}</option>`).join('')}
+      </select>
+      <div class="row">
+        ${btn('◀', 'movePhoto', { data: { index: i, step: -1 }, variant: 'secondary', size: 'sm', mutation: false, disabled: i === 0, title: 'Move earlier (the first photo is the cover)' })}
+        ${btn('▶', 'movePhoto', { data: { index: i, step: 1 }, variant: 'secondary', size: 'sm', mutation: false, disabled: i === photos.length - 1, title: 'Move later' })}
+        ${btn('✕ Remove', 'removePhoto', { data: { index: i }, variant: 'danger', size: 'sm', mutation: false })}
+      </div>
+      ${i === 0 ? '<span class="photo-cover">Cover</span>' : ''}
+    </div>`).join('');
+  const full = photos.length >= MAX_PHOTOS;
+  return `<div class="photo-uploader">
+    <div class="row-between"><span class="small strong">📷 Product photos <span class="muted">(${photos.length}/${MAX_PHOTOS})</span></span>
+      <span class="small muted">${photos.length ? 'Your photos replace the generated artwork' : 'No photos: the generated 4-angle artwork for the category is used'}</span></div>
+    <div class="photo-grid">${tiles}
+      <label class="photo-drop${full ? ' disabled' : ''}" for="product-photo-input">
+        <input id="product-photo-input" type="file" accept="image/png,image/jpeg,image/webp" multiple data-upload="product"${full ? ' disabled' : ''}>
+        <span class="photo-drop-icon" aria-hidden="true">＋</span>
+        <span>${full ? 'Maximum 4 photos' : 'Upload photos'}</span>
+        <small>PNG, JPG or WebP · resized to ${PHOTO_MAX_EDGE} px</small>
+      </label>
+    </div>
+  </div>`;
+}
+
+// Shrinks a picked image to PHOTO_MAX_EDGE px and re-encodes it as JPEG (on white,
+// so transparent PNGs don't turn black) to keep uploads small.
+async function compressImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function addProductPhotos(files) {
+  const photos = state.forms.product.photos;
+  const room = MAX_PHOTOS - photos.length;
+  const picked = [...files].filter((f) => /^image\/(png|jpeg|webp)$/.test(f.type));
+  if (picked.length < files.length) infoToast('Only PNG, JPG and WebP images can be used.', 'Some Files Skipped');
+  if (picked.length > room) infoToast(`A product can have ${MAX_PHOTOS} photos; the first ${room} were added.`, 'Photo Limit');
+  for (const file of picked.slice(0, room)) {
+    try {
+      photos.push({ data: await compressImage(file), label: PHOTO_LABELS[photos.length] || 'Detail', name: file.name });
+    } catch {
+      infoToast(`${file.name} could not be read as an image.`, 'Photo Skipped');
+    }
+  }
+  renderMain();
+}
+
 // Add a product (with opening stock) or edit one, from the Merch page.
 function productForm(item = null) {
   const people = [['', 'No manager'], ...(state.data.assignees || []).filter((u) => u.role !== 'STUDENT').map((u) => [u.id, `${u.name} (${roleLabel(u.role)})`])];
@@ -1785,11 +1858,12 @@ function productForm(item = null) {
         ${field('Regular price (₹)', input('forms.product.regular_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-regular_price' })}
         ${field('Low-stock threshold', input('forms.product.low_stock_threshold', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-low_stock_threshold' })}
         ${field('Inventory manager', select('forms.product.assigned_manager_id', people), { forId: 'forms-product-assigned_manager_id' })}
-        ${field('Colour (all 4 photos)', input('forms.product.color', { type: 'color' }), { forId: 'forms-product-color' })}
+        ${field('Artwork colour', input('forms.product.color', { type: 'color' }), { forId: 'forms-product-color' })}
         ${item ? '' : ['S', 'M', 'L', 'XL'].map((sz) => field(`Opening stock ${sz}`, input(`forms.product.${sz}`, { type: 'number', attrs: 'min="0"' }), { forId: `forms-product-${sz}` })).join('')}
         ${field('Description', textarea('forms.product.description', { placeholder: 'Fabric, fit, print…' }), { span2: true, forId: 'forms-product-description' })}
       </div>
-      <div class="note">Front, back, side and close-up photos are generated in the chosen colour for the category. Cost price feeds the profit & loss report.</div>
+      ${photoUploader()}
+      <div class="note">Cost price feeds the profit & loss report.</div>
       <div>${submitBtn('product', item ? 'Save Product' : 'Add Product')}</div>
     </form>
   </section>`;
@@ -2918,9 +2992,22 @@ const ACTIONS = {
           ...blankForms().product, name: item.name, category: item.category in CATEGORY_LABEL ? item.category : 'HOODIES', description: item.description || '',
           cost_price: String(item.cost_price ?? ''), member_price: String(item.member_price), regular_price: String(item.regular_price),
           low_stock_threshold: String(item.low_stock_threshold), assigned_manager_id: item.assigned_manager ? String(item.assigned_manager.id) : '', color: item.gallery?.color || '#1e2a4a',
+          photos: (item.gallery?.photos || []).map((p) => ({ url: p.url, label: p.label })),
         }
         : blankForms().product;
     }
+    renderMain();
+  },
+  removePhoto: ({ index }) => {
+    state.forms.product.photos.splice(Number(index), 1);
+    renderMain();
+  },
+  movePhoto: ({ index, step }) => {
+    const photos = state.forms.product.photos;
+    const from = Number(index);
+    const to = from + Number(step);
+    if (to < 0 || to >= photos.length) return;
+    [photos[from], photos[to]] = [photos[to], photos[from]];
     renderMain();
   },
   merchPeriod: async ({ period }) => {
@@ -3086,8 +3173,10 @@ const FORMS = {
       low_stock_threshold: toNumber(f.low_stock_threshold), assigned_manager_id: f.assigned_manager_id ? Number(f.assigned_manager_id) : null, color: f.color,
     };
     if (!editing) body.stock = { S: toNumber(f.S), M: toNumber(f.M), L: toNumber(f.L), XL: toNumber(f.XL) };
+    // Kept photos go back as { url }, new ones as { data }; editing always sends the list so removals apply.
+    if (editing || f.photos.length) body.photos = f.photos.map((p) => (p.url ? { url: p.url, label: p.label } : { data: p.data, label: p.label }));
     return mutate('form:product', editing ? 'PATCH' : 'POST', editing ? `/api/merch/items/${state.ui.productForm}` : '/api/merch/items', body, {
-      success: (d) => ({ title: editing ? 'Product Updated' : 'Product Added', message: `${d.item.name} is ${editing ? 'saved' : 'now in the store'}.` }),
+      success: (d) => ({ title: editing ? 'Product Updated' : 'Product Added', message: `${d.item.name} is ${editing ? 'saved' : 'now in the store'}${f.photos.length ? ` with ${plural(f.photos.length, 'photo')}` : ''}.` }),
       onSuccess: () => {
         state.ui.productForm = null;
         state.forms.product = blankForms().product;
@@ -3221,6 +3310,7 @@ document.addEventListener('change', async (event) => {
   const el = event.target;
   if (el.dataset?.model) setPath(el.dataset.model, el.value);
   if (el.dataset?.assignTask) await ACTIONS.assignTask({ id: el.dataset.assignTask, value: el.value });
+  if (el.dataset?.upload === 'product' && el.files?.length) await addProductPhotos(el.files);
   if (el.dataset?.rerender) renderMain();
   if (el.dataset?.reload) {
     if (el.dataset.reload === 'desk') state.ui.lastCheckIn = null;

@@ -1407,6 +1407,24 @@ body.logged-out .main { padding: 0; }
 .lb-thumbs { justify-content: center; }
 .center { text-align: center; }
 
+/* Uploaded product photos: shown like the generated artwork, never cropped */
+.zoom-img img { width: 92%; height: 92%; object-fit: contain; }
+.lb-img img { width: 86%; height: 86%; object-fit: contain; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.photo-uploader { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; border: 1px dashed var(--plum-100); background: var(--plum-50); }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.photo-tile { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--card-border); }
+.photo-tile img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 8px; background: #eef1f6; }
+.photo-tile .row { gap: 4px; flex-wrap: wrap; }
+.photo-cover { position: absolute; top: 12px; left: 12px; padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: #fbbf24; color: #1c1917; }
+.photo-drop { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 150px; padding: 12px; border-radius: 12px; border: 2px dashed var(--plum); color: var(--plum); text-align: center; cursor: pointer; font-weight: 700; transition: background 0.2s; }
+.photo-drop:hover { background: var(--plum-50); }
+.photo-drop.disabled { opacity: 0.5; cursor: not-allowed; }
+.photo-drop small { font-weight: 500; color: var(--muted); }
+.photo-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.photo-drop:focus-within { box-shadow: 0 0 0 3px var(--plum-100); }
+.photo-drop-icon { font-size: 28px; line-height: 1; }
+
 /* ------------------------------------------------------------------ Low stock + P&L */
 .low-stock { border-color: rgb(245 158 11 / 0.55); box-shadow: 0 0 0 1px rgb(245 158 11 / 0.25), var(--shadow); }
 .low-stock .card-head { background: linear-gradient(90deg, rgb(251 191 36 / 0.18), transparent); }

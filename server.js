@@ -7,6 +7,7 @@ const { hashPassword, verifyPassword, getDummyHash } = require('./lib/password')
 const { sign } = require('./lib/token');
 const { toPublicUser, membershipSnapshot } = require('./lib/users');
 const { requireAuth, requireRole } = require('./middleware/requireAuth');
+const { UPLOAD_DIR } = require('./lib/uploads');
 const { seedIfEmpty, DEMO_ACCOUNTS, DEMO_PASSWORD } = require('./seed');
 const membershipsRouter = require('./routes/memberships');
 const eventsRouter = require('./routes/events');
@@ -22,6 +23,15 @@ const app = express();
 app.disable('x-powered-by');
 // Only public/ is web-reachable; server code, the database and dotfiles are not.
 app.use(express.static(path.join(__dirname, 'public')));
+// Uploaded product photos (PNG/JPEG/WebP only, checked on upload). nosniff stops a
+// browser from ever treating one as anything but an image.
+app.use('/uploads', express.static(UPLOAD_DIR, {
+  index: false,
+  dotfiles: 'deny',
+  setHeaders: (res) => res.set('X-Content-Type-Options', 'nosniff'),
+}));
+// Product create/edit may carry up to 4 resized photos; every other route keeps the 100 kb cap.
+app.use('/api/merch/items', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '100kb' }));
 
 function issueToken(user) {

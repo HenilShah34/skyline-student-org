@@ -1,7 +1,9 @@
 'use strict';
 
 const { db, withTransaction, TABLES } = require('./db');
+const fs = require('node:fs');
 const { hashPassword } = require('./lib/password');
+const { MERCH_DIR } = require('./lib/uploads');
 const { DAY_MS, MEMBERSHIP_FEE, MEMBERSHIP_TERM_DAYS } = require('./lib/users');
 const { DEFAULT_CAMPAIGN: BAKE_SALE, localDate } = require('./lib/fundraising');
 
@@ -376,13 +378,16 @@ function seedDatabase({ reset = false, profile = process.env.SEED_PROFILE || 'fu
   // The 100 extra demo students share one hash of the demo password (same password, so nothing leaks).
   const bulkHash = profile === 'compact' ? null : hashPassword(DEMO_PASSWORD);
 
-  return withTransaction(() => {
+  const result = withTransaction(() => {
     if (reset) wipeAll();
     else if (userCount() > 0) return { seeded: false }; // another process seeded first
     const { users, insertLedger, now } = insertSeedData(passwordHashes);
     if (bulkHash) insertBulkData(users, bulkHash, insertLedger, now);
     return { seeded: true, profile: bulkHash ? 'full' : 'compact', counts: tableCounts() };
   });
+  // A reset wipes the products, so their uploaded photos go too.
+  if (reset && result.seeded) fs.rmSync(MERCH_DIR, { recursive: true, force: true });
+  return result;
 }
 
 function seedIfEmpty() {
