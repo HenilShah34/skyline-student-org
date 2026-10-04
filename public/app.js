@@ -1690,18 +1690,78 @@ function productGallery(item) {
   const i = Math.min(state.ui.galleryAngle[item.id] || 0, angles.length - 1);
   const thumbs = angles.map((a, n) => `<button type="button" class="thumb${n === i ? ' active' : ''}" data-action="galleryAngle" data-item="${item.id}" data-index="${n}" aria-label="${esc(a.label)}" title="${esc(a.label)}">${angleImage(g, a)}</button>`).join('');
   return `<div class="gallery">
-    <div class="zoom-stage" data-action="openLightbox" data-item="${item.id}" data-index="${i}" title="Hover to zoom · click for full-screen zoom">
+    <div class="zoom-stage" data-action="openLightbox" data-item="${item.id}" data-index="${i}" title="Click to open the zoom viewer">
       <div class="zoom-img">${angleImage(g, angles[i])}</div>
       <button type="button" class="gal-arrow prev" data-action="galleryStep" data-item="${item.id}" data-step="-1" aria-label="Previous angle">‹</button>
       <button type="button" class="gal-arrow next" data-action="galleryStep" data-item="${item.id}" data-step="1" aria-label="Next angle">›</button>
       <span class="gal-label">${g.uploaded ? '📷 ' : ''}${esc(angles[i].label)} · ${i + 1}/${angles.length}</span>
-      <span class="gal-hint">🔍 Hover to zoom</span>
+      <span class="gal-hint">🔍 Click to zoom</span>
     </div>
     <div class="thumbs">${thumbs}</div>
   </div>`;
 }
 
-let lightboxPan = { x: 0, y: 0 };
+// Zoom viewer: scale 1–4 and the image's offset (px) from the centre of the frame.
+const LB_MIN = 1;
+const LB_MAX = 4;
+const LB_STEPS = [1, 2, 3];
+let lbView = { zoom: 1, x: 0, y: 0 };
+
+function resetLightboxView() {
+  lbView = { zoom: 1, x: 0, y: 0 };
+}
+
+// Size of the picture as drawn at 1×: photos are letter-boxed (object-fit:
+// contain) and the square artwork fits the shorter side of its box.
+function lightboxContentSize(stage) {
+  const el = stage.querySelector('.lb-img > img, .lb-img > svg');
+  if (!el) return { w: stage.clientWidth, h: stage.clientHeight };
+  const bw = el.clientWidth || el.getBoundingClientRect().width;
+  const bh = el.clientHeight || el.getBoundingClientRect().height;
+  if (el.tagName === 'IMG' && el.naturalWidth) {
+    const fit = Math.min(bw / el.naturalWidth, bh / el.naturalHeight);
+    return { w: el.naturalWidth * fit, h: el.naturalHeight * fit };
+  }
+  const side = Math.min(bw, bh);
+  return { w: side, h: side };
+}
+
+// Pan limits: a zoomed picture can be dragged until its edge meets the frame,
+// never further, and at 1× it sits centred.
+function clampLightboxView(stage) {
+  const { w, h } = lightboxContentSize(stage);
+  const maxX = Math.max(0, (w * lbView.zoom - stage.clientWidth) / 2);
+  const maxY = Math.max(0, (h * lbView.zoom - stage.clientHeight) / 2);
+  lbView.x = Math.max(-maxX, Math.min(maxX, lbView.x));
+  lbView.y = Math.max(-maxY, Math.min(maxY, lbView.y));
+}
+
+// Writes the view straight to the DOM (no re-render), so zooming and dragging stay smooth.
+function applyLightboxView(stage = document.querySelector('.lb-stage')) {
+  if (!stage) return;
+  clampLightboxView(stage);
+  const img = stage.querySelector('.lb-img');
+  if (img) img.style.transform = `translate(${lbView.x}px, ${lbView.y}px) scale(${lbView.zoom})`;
+  stage.classList.toggle('pannable', lbView.zoom > LB_MIN + 0.001);
+  const readout = document.querySelector('[data-lb-readout]');
+  if (readout) readout.textContent = `${Math.round(lbView.zoom * 100)}%`;
+  document.querySelectorAll('.lb-zoom [data-zoom]').forEach((b) => b.classList.toggle('active', Math.abs(Number(b.dataset.zoom) - lbView.zoom) < 0.01));
+  if (state.ui.lightbox) state.ui.lightbox.zoom = lbView.zoom;
+}
+
+// Zooms to `zoom` keeping the point under (clientX, clientY) fixed on screen.
+// A screen point p (from the frame's centre) shows content point c = (p − t) / z,
+// so keeping c under p at the new zoom z2 needs t2 = p − z2 · c.
+function zoomLightboxAt(stage, zoom, clientX, clientY) {
+  const r = stage.getBoundingClientRect();
+  const px = (clientX ?? r.left + r.width / 2) - (r.left + r.width / 2);
+  const py = (clientY ?? r.top + r.height / 2) - (r.top + r.height / 2);
+  const next = Math.max(LB_MIN, Math.min(LB_MAX, zoom));
+  const cx = (px - lbView.x) / lbView.zoom;
+  const cy = (py - lbView.y) / lbView.zoom;
+  lbView = { zoom: next, x: px - next * cx, y: py - next * cy };
+  applyLightboxView(stage);
+}
 
 function lightboxModal() {
   const lb = state.ui.lightbox;
@@ -1714,15 +1774,20 @@ function lightboxModal() {
   return `<div class="pass-backdrop" data-action="closeLightbox" data-self="1">
     <div class="lb-dialog" role="dialog" aria-modal="true" aria-label="${esc(item.name)} photo viewer">
       <div class="lb-head"><div><b>${esc(item.name)}</b><div class="small muted">${esc(a.label)} · ${lb.index + 1}/${angles.length}</div></div>
-        <div class="lb-zoom">${[1, 2, 3].map((z) => `<button type="button" class="pill${lb.zoom === z ? ' active' : ''}" data-action="lightboxZoom" data-zoom="${z}">${z}×</button>`).join('')}</div>
+        <div class="lb-zoom">
+          <button type="button" class="pill" data-action="lightboxNudge" data-step="-1" aria-label="Zoom out" title="Zoom out (−)">−</button>
+          ${LB_STEPS.map((z) => `<button type="button" class="pill${Math.abs(lbView.zoom - z) < 0.01 ? ' active' : ''}" data-action="lightboxZoom" data-zoom="${z}">${z}×</button>`).join('')}
+          <button type="button" class="pill" data-action="lightboxNudge" data-step="1" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <span class="lb-readout" data-lb-readout>${Math.round(lbView.zoom * 100)}%</span>
+        </div>
         <button type="button" class="icon-btn lb-close" data-action="closeLightbox" aria-label="Close">×</button></div>
-      <div class="lb-stage${lb.zoom > 1 ? ' pannable' : ''}">
-        <div class="lb-img" style="transform: translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lb.zoom})">${angleImage(g, a)}</div>
+      <div class="lb-stage${lbView.zoom > 1 ? ' pannable' : ''}" title="Scroll or double-click to zoom where you point">
+        <div class="lb-img" style="transform: translate(${lbView.x}px, ${lbView.y}px) scale(${lbView.zoom})">${angleImage(g, a)}</div>
         <button type="button" class="gal-arrow prev" data-action="lightboxStep" data-step="-1" aria-label="Previous angle">‹</button>
         <button type="button" class="gal-arrow next" data-action="lightboxStep" data-step="1" aria-label="Next angle">›</button>
       </div>
       <div class="thumbs lb-thumbs">${thumbs}</div>
-      <div class="small muted center">Drag to pan when zoomed · mouse wheel or 1× / 2× / 3× to zoom · ← → to switch angles · Esc to close</div>
+      <div class="small muted center">Scroll, double-click or pinch to zoom where you point · drag to move around · + / − / 0 keys · ← → to switch angles · Esc to close</div>
     </div>
   </div>`;
 }
@@ -2956,7 +3021,7 @@ const ACTIONS = {
     renderMain();
   },
   openLightbox: ({ item, index }) => {
-    lightboxPan = { x: 0, y: 0 };
+    resetLightboxView();
     state.ui.lightbox = { item: Number(item), index: Number(index) || 0, zoom: 1 };
     renderModal();
   },
@@ -2964,22 +3029,30 @@ const ACTIONS = {
     state.ui.lightbox = null;
     renderModal();
   },
+  // 1× / 2× / 3× buttons zoom on the centre of the frame.
   lightboxZoom: ({ zoom }) => {
-    lightboxPan = { x: 0, y: 0 };
-    state.ui.lightbox.zoom = Number(zoom);
-    renderModal();
+    const stage = document.querySelector('.lb-stage');
+    if (!stage) return;
+    if (Number(zoom) === 1) {
+      resetLightboxView();
+      applyLightboxView(stage);
+    } else zoomLightboxAt(stage, Number(zoom));
+  },
+  lightboxNudge: ({ step }) => {
+    const stage = document.querySelector('.lb-stage');
+    if (stage) zoomLightboxAt(stage, lbView.zoom * (Number(step) > 0 ? 1.25 : 0.8));
   },
   lightboxStep: ({ step }) => {
     const lb = state.ui.lightbox;
     const item = state.data.merch?.items.find((x) => x.id === lb.item);
     const n = (item?.gallery?.angles || DEFAULT_ANGLES).length;
     lb.index = (lb.index + Number(step) + n) % n;
-    lightboxPan = { x: 0, y: 0 };
+    resetLightboxView();
     renderModal();
   },
   lightboxIndex: ({ index }) => {
     state.ui.lightbox.index = Number(index);
-    lightboxPan = { x: 0, y: 0 };
+    resetLightboxView();
     renderModal();
   },
   productForm: ({ id }) => {
@@ -3326,56 +3399,83 @@ document.addEventListener('submit', (event) => {
   FORMS[form.dataset.form]?.();
 });
 
-// Hover (or touch-drag) zoom inside a product photo, like a store's magnifier.
-function zoomAt(stage, clientX, clientY) {
-  const r = stage.getBoundingClientRect();
-  stage.style.setProperty('--zx', `${(((clientX - r.left) / r.width) * 100).toFixed(1)}%`);
-  stage.style.setProperty('--zy', `${(((clientY - r.top) / r.height) * 100).toFixed(1)}%`);
-  stage.classList.add('zooming');
-}
-document.addEventListener('mousemove', (event) => {
-  const stage = event.target.closest?.('.zoom-stage');
-  if (stage && !event.target.closest('.gal-arrow')) zoomAt(stage, event.clientX, event.clientY);
-  else document.querySelectorAll('.zoom-stage.zooming').forEach((s) => s.classList.remove('zooming'));
-});
-document.addEventListener('mouseout', (event) => {
-  const stage = event.target.closest?.('.zoom-stage');
-  if (stage && !stage.contains(event.relatedTarget)) stage.classList.remove('zooming');
-});
-document.addEventListener('touchmove', (event) => {
-  const stage = event.target.closest?.('.zoom-stage');
-  if (stage && event.touches[0]) zoomAt(stage, event.touches[0].clientX, event.touches[0].clientY);
-}, { passive: true });
-document.addEventListener('touchend', () => document.querySelectorAll('.zoom-stage.zooming').forEach((s) => s.classList.remove('zooming')));
+// Zoom viewer input. Mouse wheel and double-click zoom where you point; one
+// finger or the mouse drags; two fingers pinch-zoom around their midpoint.
+const lbPointers = new Map();
+let lbDrag = null;
+let lbPinch = null;
 
-// Lightbox: drag to pan when zoomed, wheel to zoom.
-let panStart = null;
+function lbStageFrom(event) {
+  return state.ui.lightbox ? event.target.closest?.('.lb-stage') : null;
+}
+
 document.addEventListener('pointerdown', (event) => {
-  const stage = event.target.closest?.('.lb-stage.pannable');
+  const stage = lbStageFrom(event);
   if (!stage || event.target.closest('.gal-arrow')) return;
-  panStart = { x: event.clientX - lightboxPan.x, y: event.clientY - lightboxPan.y, stage };
-  stage.setPointerCapture?.(event.pointerId);
+  lbPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  try {
+    stage.setPointerCapture(event.pointerId); // keep receiving moves if the pointer leaves the frame
+  } catch {
+    // some synthetic/touch pointers cannot be captured; dragging still works
+  }
+  stage.classList.add('dragging');
+  if (lbPointers.size === 2) {
+    const [a, b] = [...lbPointers.values()];
+    lbPinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: lbView.zoom };
+    lbDrag = null;
+  } else if (lbPointers.size === 1) {
+    lbDrag = { x: event.clientX - lbView.x, y: event.clientY - lbView.y };
+  }
 });
+
 document.addEventListener('pointermove', (event) => {
-  if (!panStart || !state.ui.lightbox) return;
-  const zoom = state.ui.lightbox.zoom;
-  const r = panStart.stage.getBoundingClientRect();
-  const maxX = ((zoom - 1) * r.width) / 2;
-  const maxY = ((zoom - 1) * r.height) / 2;
-  lightboxPan = {
-    x: Math.max(-maxX, Math.min(maxX, event.clientX - panStart.x)),
-    y: Math.max(-maxY, Math.min(maxY, event.clientY - panStart.y)),
-  };
-  const img = panStart.stage.querySelector('.lb-img');
-  if (img) img.style.transform = `translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${zoom})`;
+  if (!lbPointers.has(event.pointerId)) return;
+  const stage = document.querySelector('.lb-stage');
+  if (!stage) return;
+  lbPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (lbPinch && lbPointers.size >= 2) {
+    const [a, b] = [...lbPointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (lbPinch.dist > 0) zoomLightboxAt(stage, lbPinch.zoom * (dist / lbPinch.dist), (a.x + b.x) / 2, (a.y + b.y) / 2);
+  } else if (lbDrag && lbView.zoom > LB_MIN) {
+    lbView.x = event.clientX - lbDrag.x;
+    lbView.y = event.clientY - lbDrag.y;
+    applyLightboxView(stage);
+  }
 });
-document.addEventListener('pointerup', () => { panStart = null; });
+
+function endLightboxPointer(event) {
+  if (!lbPointers.delete(event.pointerId)) return;
+  if (lbPointers.size < 2) lbPinch = null;
+  if (lbPointers.size === 1) {
+    const [p] = [...lbPointers.values()];
+    lbDrag = { x: p.x - lbView.x, y: p.y - lbView.y };
+  }
+  if (lbPointers.size === 0) {
+    lbDrag = null;
+    document.querySelector('.lb-stage')?.classList.remove('dragging');
+  }
+}
+document.addEventListener('pointerup', endLightboxPointer);
+document.addEventListener('pointercancel', endLightboxPointer);
+
 document.addEventListener('wheel', (event) => {
-  if (!state.ui.lightbox || !event.target.closest?.('.lb-stage')) return;
+  const stage = lbStageFrom(event);
+  if (!stage) return;
   event.preventDefault();
-  const next = Math.max(1, Math.min(3, state.ui.lightbox.zoom + (event.deltaY < 0 ? 1 : -1)));
-  if (next !== state.ui.lightbox.zoom) ACTIONS.lightboxZoom({ zoom: next });
+  // Smooth steps for trackpads and wheels alike: about 15% per notch.
+  const factor = Math.exp(-Math.max(-120, Math.min(120, event.deltaY)) * 0.0012);
+  zoomLightboxAt(stage, lbView.zoom * factor, event.clientX, event.clientY);
 }, { passive: false });
+
+document.addEventListener('dblclick', (event) => {
+  const stage = lbStageFrom(event);
+  if (!stage || event.target.closest('.gal-arrow')) return;
+  if (lbView.zoom > LB_MIN + 0.01) {
+    resetLightboxView();
+    applyLightboxView(stage);
+  } else zoomLightboxAt(stage, 2.5, event.clientX, event.clientY);
+});
 
 // "/" jumps to the active tab's search box, unless you're already typing somewhere.
 document.addEventListener('keydown', (event) => {
@@ -3393,6 +3493,12 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('keydown', (event) => {
   if (state.ui.lightbox && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
     ACTIONS.lightboxStep({ step: event.key === 'ArrowLeft' ? -1 : 1 });
+    return;
+  }
+  if (state.ui.lightbox && ['+', '=', '-', '_', '0'].includes(event.key)) {
+    event.preventDefault();
+    if (event.key === '0') ACTIONS.lightboxZoom({ zoom: 1 });
+    else ACTIONS.lightboxNudge({ step: event.key === '-' || event.key === '_' ? -1 : 1 });
     return;
   }
   if (event.key !== 'Escape') return;
