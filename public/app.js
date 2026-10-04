@@ -43,6 +43,80 @@ const PRODUCT_ART = {
   tee: `<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M44 20c4 8 28 8 32 0l26 12-8 20-12-5v55H30V47l-12 5-8-20z" fill="#017e84"/><path d="M44 20c4 10 28 10 32 0" fill="none" stroke="#015f63" stroke-width="3"/><path d="M38 66l8-10 6 6 8-14 8 10 6-6 8 14" fill="none" stroke="#e6f4f4" stroke-width="3" stroke-linejoin="round"/><text x="60" y="86" text-anchor="middle" font-size="8" font-weight="800" fill="#e6f4f4" font-family="system-ui, sans-serif">SKYLINE</text></svg>`,
 };
 
+const MERCH_CATEGORIES = [['HOODIES', 'Hoodies'], ['T_SHIRTS', 'T-Shirts'], ['CAPS', 'Caps'], ['PANTS', 'Pants / Joggers'], ['ACCESSORIES', 'Accessories']];
+const CATEGORY_LABEL = { ...Object.fromEntries(MERCH_CATEGORIES), APPAREL: 'Apparel' };
+const DEFAULT_ANGLES = [
+  { view: 'front', label: 'Front View' },
+  { view: 'back', label: 'Back View' },
+  { view: 'side', label: 'Side Profile' },
+  { view: 'closeup', label: 'Fabric & Stitch Close-Up' },
+];
+const MERCH_PERIODS = [['7d', 'Last 7 Days'], ['30d', 'Last 30 Days'], ['90d', 'This Semester · 90 Days'], ['all', 'All Time']];
+
+// Lighten (amount > 0) or darken (amount < 0) a #rrggbb colour.
+function shade(hex, amount) {
+  const n = parseInt(String(hex).slice(1), 16) || 0x1e2a4a;
+  const f = (c) => Math.max(0, Math.min(255, Math.round(amount < 0 ? c * (1 + amount) : c + (255 - c) * amount)));
+  return `#${[f(n >> 16), f((n >> 8) & 255), f(n & 255)].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+const EMBLEM = (x, y, k = 1) => `<g transform="translate(${x} ${y}) scale(${k})"><path d="M-14 9a14 14 0 0 1 28 0" fill="none" stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"/><path d="M0-9l1.4 3.3 3.4 1.4-3.4 1.4L0 .6l-1.4-3.3-3.4-1.4 3.4-1.4z" fill="#fde68a"/><path d="M-11 18v-7h4v7zM-6 18V5l2-2 2 2v13zM-1 18V2l1-2 1 2v16zM3 18V6h4v12zM8 18v-6h3v6z" fill="#fde68a"/></g>`;
+
+// Close-up: woven texture, a stitched seam and the embroidered crest.
+function closeupArt(c, kind) {
+  const d = shade(c, -0.3);
+  const l = shade(c, 0.18);
+  let lines = '';
+  for (let i = -200; i < 200; i += 9) lines += `<path d="M${i} 0 l200 200" stroke="${l}" stroke-width="2.2" opacity=".55"/><path d="M${i + 200} 0 l-200 200" stroke="${d}" stroke-width="1.4" opacity=".45"/>`;
+  const extra = {
+    pants: '<g transform="translate(150 40)"><rect x="-6" y="0" width="12" height="130" rx="3" fill="#cbd5e1"/>' + Array.from({ length: 16 }, (_, i) => `<rect x="${i % 2 ? -10 : 2}" y="${6 + i * 8}" width="8" height="5" rx="1" fill="#94a3b8"/>`).join('') + '<rect x="-9" y="134" width="18" height="22" rx="4" fill="#e2e8f0"/></g>',
+    tote: '<g transform="translate(150 50)"><rect x="-26" y="0" width="52" height="34" rx="8" fill="#e2e8f0"/><rect x="-26" y="10" width="52" height="4" fill="#94a3b8"/><rect x="-26" y="20" width="52" height="4" fill="#94a3b8"/></g>',
+    cap: '<g fill="none" stroke="#fde68a" stroke-width="1.6" stroke-dasharray="3 2"><circle cx="70" cy="80" r="44"/></g>',
+  }[kind] || '';
+  return `<svg viewBox="0 0 200 200" aria-hidden="true"><rect width="200" height="200" fill="${c}"/>${lines}
+    <path d="M0 150 Q100 132 200 150" fill="none" stroke="${d}" stroke-width="8"/><path d="M0 150 Q100 132 200 150" fill="none" stroke="#f8fafc" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <circle cx="70" cy="80" r="38" fill="${d}"/>${EMBLEM(70, 76, 2.1)}${extra}
+    <text x="12" y="188" font-family="sans-serif" font-size="11" font-weight="700" fill="#f8fafc" opacity=".85">${{ hoodie: '320 GSM COTTON FLEECE', tee: '180 GSM SOFT-WASHED COTTON', cap: '3D RAISED EMBROIDERY', pants: '4-WAY STRETCH · YKK ZIP', tote: '12 OZ CANVAS · STEEL BOTTLE' }[kind] || 'PREMIUM FABRIC'}</text></svg>`;
+}
+
+// Front / back / side / close-up drawings for each product style, in the item's colour.
+function productArt(style, view, color = '#1e2a4a') {
+  const c = color;
+  const d = shade(c, -0.28);
+  const l = shade(c, 0.2);
+  if (view === 'closeup') return closeupArt(c, style);
+  const svg = (body) => `<svg viewBox="0 0 200 200" aria-hidden="true">${body}</svg>`;
+  const shine = '<path d="M62 70 Q72 120 64 168" stroke="#fff" stroke-opacity=".13" stroke-width="12" fill="none" stroke-linecap="round"/>';
+  if (style === 'hoodie') {
+    const body = `<path d="M70 40 Q100 28 130 40 L168 60 L184 114 L162 122 L154 98 L154 176 Q100 184 46 176 L46 98 L38 122 L16 114 L32 60 Z" fill="${c}"/><rect x="46" y="168" width="108" height="9" rx="3" fill="${d}"/><path d="M16 114 l22 8 l2 -7 l-21 -8z M184 114 l-22 8 l-2 -7 l21 -8z" fill="${d}"/>`;
+    if (view === 'front') return svg(`${body}<path d="M74 42 Q100 72 126 42 Q120 18 100 16 Q80 18 74 42Z" fill="${d}"/><path d="M86 44 Q100 62 114 44" fill="none" stroke="${shade(c, -0.5)}" stroke-width="4"/><path d="M93 58v22M107 58v22" stroke="#e5e7eb" stroke-width="2.4" stroke-linecap="round"/><circle cx="93" cy="82" r="2.6" fill="#e5e7eb"/><circle cx="107" cy="82" r="2.6" fill="#e5e7eb"/><path d="M64 130 H136 L144 160 H56 Z" fill="${d}"/>${EMBLEM(100, 102, 0.9)}${shine}`);
+    if (view === 'back') return svg(`${body}<path d="M72 44 Q100 22 128 44 Q124 70 100 74 Q76 70 72 44Z" fill="${d}"/><path d="M100 30 v40" stroke="${shade(c, -0.45)}" stroke-width="2"/><text x="100" y="120" text-anchor="middle" font-family="sans-serif" font-weight="800" font-size="17" letter-spacing="3" fill="#fde68a">SKYLINE</text><text x="100" y="138" text-anchor="middle" font-family="sans-serif" font-size="9" letter-spacing="3" fill="#f8fafc" opacity=".8">STUDENT ASSOCIATION · 2026</text>${shine}`);
+    return svg(`<path d="M78 46 Q66 26 86 16 Q110 10 118 42 L134 64 L134 176 Q102 184 70 176 L70 74 Z" fill="${c}"/><path d="M78 46 Q66 26 86 16 Q104 12 112 34 Q96 30 90 48Z" fill="${d}"/><path d="M96 62 L76 128 L92 132 L110 72Z" fill="${d}"/><rect x="70" y="168" width="64" height="9" rx="3" fill="${d}"/><path d="M76 128 l16 4 l-1 8 l-17 -4z" fill="${shade(c, -0.45)}"/>${shine}`);
+  }
+  if (style === 'tee') {
+    const body = `<path d="M72 34 Q100 46 128 34 L168 54 L156 86 L138 78 L138 176 H62 V78 L44 86 L32 54 Z" fill="${c}"/>`;
+    if (view === 'front') return svg(`${body}<path d="M76 35 Q100 58 124 35" fill="none" stroke="${d}" stroke-width="5"/>${EMBLEM(116, 74, 0.6)}<path d="M44 86 l-4 -10 M156 86 l4 -10" stroke="${d}" stroke-width="3"/>${shine}`);
+    if (view === 'back') return svg(`${body}<path d="M78 36 Q100 44 122 36" fill="none" stroke="${d}" stroke-width="5"/><path d="M70 120 h8v-14h6v-10l4-4 4 4v10h6v-20l3-5 3 5v20h6v-12h8v12h6v14h8" fill="none" stroke="#fde68a" stroke-width="3" stroke-linejoin="round"/><text x="100" y="146" text-anchor="middle" font-family="sans-serif" font-weight="800" font-size="12" letter-spacing="3" fill="#f8fafc">SKYLINE</text>${shine}`);
+    return svg(`<path d="M84 34 Q100 40 116 36 L134 56 L126 84 L118 80 L118 176 H82 V70 Z" fill="${c}"/><path d="M116 36 L134 56 L126 84 L112 66Z" fill="${d}"/><path d="M84 34 Q92 44 100 40" fill="none" stroke="${d}" stroke-width="4"/>${shine}`);
+  }
+  if (style === 'cap') {
+    if (view === 'front') return svg(`<path d="M36 124 Q36 52 100 48 Q164 52 164 124 Z" fill="${c}"/><path d="M100 48 V124 M66 58 Q60 90 62 124 M134 58 Q140 90 138 124" stroke="${d}" stroke-width="2"/><circle cx="100" cy="49" r="5" fill="${d}"/><path d="M26 124 Q100 160 174 124 Q100 140 26 124Z" fill="${d}"/>${EMBLEM(100, 92, 1.1)}<path d="M60 70 Q66 96 62 118" stroke="#fff" stroke-opacity=".14" stroke-width="10" fill="none" stroke-linecap="round"/>`);
+    if (view === 'back') return svg(`<path d="M36 124 Q36 52 100 48 Q164 52 164 124 Z" fill="${c}"/><path d="M74 124 Q100 92 126 124 Z" fill="#e2e8f0"/><rect x="72" y="112" width="56" height="9" rx="4" fill="#111827"/>${[0, 1, 2, 3, 4, 5].map((i) => `<circle cx="${80 + i * 8}" cy="116.5" r="2" fill="#e2e8f0"/>`).join('')}<circle cx="100" cy="49" r="5" fill="${d}"/><text x="100" y="84" text-anchor="middle" font-family="sans-serif" font-weight="800" font-size="10" letter-spacing="2" fill="#fde68a">SKYLINE</text>`);
+    return svg(`<path d="M56 122 Q58 56 116 54 Q156 60 156 122 Z" fill="${c}"/><path d="M56 118 Q22 122 8 136 Q44 140 66 126 Z" fill="${d}"/><path d="M104 56 Q96 90 98 122" stroke="${d}" stroke-width="2" fill="none"/><circle cx="114" cy="55" r="4" fill="${d}"/>${EMBLEM(80, 92, 0.75)}`);
+  }
+  if (style === 'pants') {
+    const legs = `<path d="M58 36 H142 L152 186 H110 L100 92 L90 186 H48 Z" fill="${c}"/><rect x="58" y="30" width="84" height="12" rx="4" fill="${d}"/><path d="M48 180 h42 v6 h-42z M110 180 h42 v6 h-42z" fill="${d}"/>`;
+    if (view === 'front') return svg(`${legs}<path d="M94 42 q6 14 -2 22 M106 42 q-6 14 2 22" stroke="#e5e7eb" stroke-width="2" fill="none"/><path d="M60 50 L50 178 M140 50 L150 178" stroke="#e2e8f0" stroke-width="2.5" stroke-dasharray="1 0"/><path d="M66 58 h18 M116 58 h18" stroke="${shade(c, 0.35)}" stroke-width="2"/>${EMBLEM(124, 74, 0.45)}`);
+    if (view === 'back') return svg(`${legs}<rect x="66" y="56" width="26" height="22" rx="4" fill="${d}"/><rect x="108" y="56" width="26" height="22" rx="4" fill="${d}"/><path d="M70 62 h18 M112 62 h18" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/><path d="M100 42 V92" stroke="${d}" stroke-width="2"/>`);
+    return svg(`<path d="M80 36 H124 L132 186 H86 Z" fill="${c}"/><rect x="80" y="30" width="44" height="12" rx="4" fill="${d}"/><path d="M104 42 L108 186" stroke="#e2e8f0" stroke-width="5"/><path d="M104 42 L108 186" stroke="#94a3b8" stroke-width="1.4"/><rect x="86" y="70" width="14" height="30" rx="3" fill="${d}"/><path d="M93 72 v26" stroke="#cbd5e1" stroke-width="1.6"/>`);
+  }
+  // tote + bottle
+  const bottle = (x) => `<rect x="${x}" y="96" width="26" height="86" rx="10" fill="#94a3b8"/><rect x="${x}" y="96" width="26" height="86" rx="10" fill="url(#none)" stroke="#64748b"/><rect x="${x + 3}" y="84" width="20" height="16" rx="5" fill="#334155"/><path d="M${x + 6} 112 v56" stroke="#fff" stroke-opacity=".35" stroke-width="4" stroke-linecap="round"/>`;
+  if (view === 'front') return svg(`<path d="M32 72 H140 L134 182 H38 Z" fill="${c}"/><path d="M58 72 Q58 28 86 28 Q114 28 114 72" fill="none" stroke="${d}" stroke-width="8"/><rect x="32" y="72" width="108" height="10" fill="${d}"/>${EMBLEM(86, 118, 1.1)}${bottle(148)}`);
+  if (view === 'back') return svg(`<path d="M32 72 H140 L134 182 H38 Z" fill="${c}"/><path d="M58 72 Q58 28 86 28 Q114 28 114 72" fill="none" stroke="${d}" stroke-width="8"/><rect x="48" y="104" width="76" height="52" rx="5" fill="${d}"/><path d="M48 112 h76" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/>${bottle(148)}`);
+  return svg(`<path d="M70 72 H112 L110 182 H72 Z" fill="${d}"/><path d="M78 72 Q78 34 92 34 Q104 34 104 72" fill="none" stroke="${shade(c, -0.45)}" stroke-width="7"/><path d="M70 72 H112" stroke="${c}" stroke-width="10"/>${bottle(118)}`);
+}
+
 const TABS = [
   { id: 'overview', label: 'Overview & Membership', scene: 'Scene 1' },
   { id: 'events', label: 'Events & Ticketing', scene: 'Scene 2' },
@@ -55,6 +129,14 @@ const TABS = [
 
 const ROLE_LABEL = { ADMIN: 'Admin', TREASURER: 'Treasurer', VOLUNTEER: 'Volunteer', STUDENT: 'Student' };
 const ROLE_TONE = { ADMIN: 'plum', TREASURER: 'amber', VOLUNTEER: 'teal', STUDENT: 'blue' };
+// Club hierarchy, highest first. A student's standing comes from their live
+// membership: an active member outranks a basic operational volunteer.
+const HIERARCHY = ['ADMIN', 'TREASURER', 'CLUB_MEMBER', 'VOLUNTEER', 'NON_MEMBER'];
+const RANK_LABEL = { ADMIN: 'Admin', TREASURER: 'Treasurer', CLUB_MEMBER: 'Student · Club Member', VOLUNTEER: 'Volunteer', NON_MEMBER: 'Student (Non-Member)' };
+const RANK_TONE = { ADMIN: 'plum', TREASURER: 'amber', CLUB_MEMBER: 'gold', VOLUNTEER: 'teal', NON_MEMBER: 'slate' };
+const SCOPES = [['ALL', 'Full Club Access'], ['EVENTS_ONLY', 'Events Only'], ['MERCH_ONLY', 'Merch Store Only'], ['BAKE_SALE_ONLY', 'Bake Sale Only'], ['FINANCE_ONLY', 'Finance Only']];
+const SCOPE_LABEL = Object.fromEntries(SCOPES);
+const ACCESS_PAGE_SIZE = 12;
 const MEMBERSHIP_TONE = { ACTIVE: 'green', EXPIRED: 'red', NONE: 'slate' };
 const FULFILLMENT = { PAID_PENDING_PICKUP: ['Awaiting pickup', 'amber'], PICKED_UP: ['Picked up', 'green'] };
 const REIMBURSEMENT = { PENDING: ['Pending', 'amber'], APPROVED_PAID: ['Approved & paid', 'green'], REJECTED: ['Rejected', 'red'] };
@@ -103,6 +185,7 @@ function blankData() {
     reimbursements: null,
     ledger: null,
     users: null,
+    merchAnalytics: null,
   };
 }
 
@@ -120,6 +203,10 @@ function blankForms() {
     task: { title: '', assigned_to: '', due_date: '', campaign_name: DEFAULT_CAMPAIGN },
     expense: { title: '', category: 'FUNDRAISER_SUPPLIES', amount: '', receipt_reference: '' },
     income: { amount: '', description: '', reference_id: '' },
+    editEvent: { title: '', event_date: '', location: '', total_seats: '', member_price: '', guest_price: '', description: '' },
+    editTask: { title: '', due_date: '' },
+    taskRequest: { note: '' },
+    product: { name: '', category: 'HOODIES', description: '', cost_price: '', member_price: '', regular_price: '', low_stock_threshold: '5', assigned_manager_id: '', color: '#1e2a4a', S: '10', M: '10', L: '10', XL: '10' },
   };
 }
 
@@ -154,6 +241,17 @@ const state = {
     ledgerType: '',
     ledgerCategory: '',
     roleDraft: {}, // user id -> role picked in the access table
+    scopeDraft: {}, // user id -> access scope picked in the access table
+    accessQuery: '',
+    accessPage: 0,
+    confirm: null, // { title, message, confirmLabel, tone } while a confirmation is open
+    editEventId: null,
+    editTaskId: null,
+    requestTaskId: null,
+    productForm: null, // null | 'new' | item id
+    galleryAngle: {}, // item id -> index of the angle shown
+    lightbox: null, // { item, index, zoom }
+    merchPeriod: '30d',
     authView: 'signin', // signin | register | forgot-password | forgot-email
     authError: null,
     showPassword: false,
@@ -239,6 +337,37 @@ function roleLabel(role) {
 
 function isStaff() {
   return Boolean(state.user && STAFF_ROLES.has(state.user.role));
+}
+
+function clubRank(role, membershipStatus) {
+  if (role === 'STUDENT') return membershipStatus === 'ACTIVE' ? 'CLUB_MEMBER' : 'NON_MEMBER';
+  return role;
+}
+
+function rankOf(u) {
+  return clubRank(u.role, u.membership?.status ?? u.membership_status);
+}
+
+function displayRole(u) {
+  return u.id === FOUNDING_ADMIN_ID && u.role === 'ADMIN' ? 'Founding Admin' : RANK_LABEL[rankOf(u)];
+}
+
+function roleBadge(u) {
+  return badge(displayRole(u), RANK_TONE[rankOf(u)]);
+}
+
+function scopeBadge(scope) {
+  return scope && scope !== 'ALL' ? badge(`Scope: ${SCOPE_LABEL[scope] || scope}`, 'blue') : '';
+}
+
+// Admin and Treasurer run the bake-sale board; members and volunteers apply for tasks.
+function isTaskManager() {
+  return Boolean(state.user && (state.user.role === 'ADMIN' || state.user.role === 'TREASURER'));
+}
+
+function canRequestTasks() {
+  const u = state.user;
+  return Boolean(u && (u.role === 'VOLUNTEER' || u.role === 'TREASURER' || (u.role === 'STUDENT' && u.membership?.status === 'ACTIVE')));
 }
 
 function isAdmin() {
@@ -366,6 +495,8 @@ function friendlyConflict(error, d) {
   }
   if (/Receipt .* already submitted/.test(error)) return { title: 'Duplicate Receipt', message: `${error}.` };
   if (/already recorded/.test(error)) return { title: 'Already Recorded', message: `${error}.` };
+  if (/already requested|already assigned to you|already done/.test(error)) return { title: 'Already Requested', message: `${error}.` };
+  if (/Request already/.test(error)) return { title: 'Already Reviewed', message: `${error}.` };
   if (/email already exists/.test(error)) return { title: 'Email Already Registered', message: 'Sign in instead, or use “Forgot password?” to reset it.' };
   return { title: 'Already Done', message: error || 'Someone else changed this first. The page has been refreshed.' };
 }
@@ -383,8 +514,11 @@ function friendlyError(result) {
       : { title: 'Please Sign In', message: 'Your session has ended. Please sign in again.' };
     case 403: {
       if (/own reimbursement/.test(d.reason)) return { title: 'Separation of Duties', message: 'You can’t approve your own expense claim — another Treasurer or Admin must review it.' };
-      if (/assigned to them/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Students can only move tasks that are assigned to them.' };
-      if (/reassign/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Only volunteers, the Treasurer or the Admin can reassign tasks.' };
+      if (/assigned person/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Only the person this task is assigned to, or the Admin, can move it.' };
+      if (/reassign/.test(d.reason)) return { title: 'Action Not Allowed', message: 'Only the Admin or the Treasurer can assign tasks.' };
+      if (/request tasks/.test(d.reason)) return { title: 'Members & Volunteers Only', message: 'Only club members and volunteers can request tasks. Join the club to apply.' };
+      if (/scoped strictly/.test(d.reason || '')) return { title: 'Outside Your Access Scope', message: `${d.reason}.` };
+      if (/do not purchase/.test(d.reason || '')) return { title: 'Admin View Only', message: 'Admins manage events and inventory and do not purchase tickets or merch.' };
       if (/Founding Admin|own role/.test(d.reason || '')) return { title: 'Access Change Not Allowed', message: /[.!]$/.test(d.reason) ? d.reason : `${d.reason}.` };
       const roles = /requires role: (.+)$/.exec(d.reason || '');
       if (roles) {
@@ -564,6 +698,13 @@ async function loadAnnouncements() {
   else toastIfError(res);
 }
 
+async function loadMerchAnalytics() {
+  if (!isFinance()) return;
+  const res = await api('GET', `/api/merch/analytics?period=${state.ui.merchPeriod}`);
+  if (res.ok) state.data.merchAnalytics = res.data;
+  else toastIfError(res);
+}
+
 async function loadMerchItems() {
   const res = await api('GET', '/api/merch/items');
   if (!res.ok) return toastIfError(res);
@@ -598,7 +739,7 @@ async function loadTasks() {
 }
 
 async function loadAssignees() {
-  if (!isStaff()) return;
+  if (!isTaskManager() && !isAdmin()) return;
   const res = await api('GET', '/api/tasks/assignees');
   if (res.ok) state.data.assignees = res.data.users;
 }
@@ -628,6 +769,7 @@ async function loadUsers() {
   if (!res.ok) return toastIfError(res);
   state.data.users = res.data;
   state.ui.roleDraft = Object.fromEntries(res.data.users.map((u) => [u.id, u.role]));
+  state.ui.scopeDraft = Object.fromEntries(res.data.users.map((u) => [u.id, u.access_scope || 'ALL']));
 }
 
 const LOADERS = {
@@ -637,16 +779,16 @@ const LOADERS = {
     await loadDesk();
   },
   announcements: () => loadAnnouncements(),
-  merch: () => Promise.all([loadMerchItems(), loadOrders()]),
+  merch: () => Promise.all([loadMerchItems(), loadOrders(), loadMerchAnalytics(), isAdmin() ? loadAssignees() : null]),
   tasks: () => Promise.all([loadTasks(), loadAssignees()]),
-  finance: () => Promise.all([loadReimbursements(), loadLedger()]),
+  finance: () => Promise.all([loadReimbursements(), loadLedger(), loadMerchAnalytics()]),
   profile: async () => {
     await refreshSession();
     if (state.user) state.forms.profile.name = state.user.name;
   },
 };
 
-const SEARCHERS = { lookup: loadLookup, desk: loadDesk, announcements: loadAnnouncements, orders: loadOrders };
+const SEARCHERS = { lookup: loadLookup, desk: loadDesk, announcements: loadAnnouncements, orders: loadOrders, access: async () => { state.ui.accessPage = 0; } };
 
 async function loadTab(tab = state.activeTab) {
   state.tabLoading = true;
@@ -698,7 +840,7 @@ async function signIn(key, email, password) {
     onError: (res) => {
       state.ui.authError = errorText(res);
     },
-    success: (d) => ({ title: `Welcome back, ${firstName(d.user.name)}`, message: `Signed in as ${roleLabel(d.user.role)}.` }),
+    success: (d) => ({ title: `Welcome back, ${firstName(d.user.name)}`, message: `Signed in as ${displayRole(d.user)}.` }),
     refresh: () => LOADERS[state.activeTab]?.(),
   });
 }
@@ -881,8 +1023,9 @@ function barcodeSvg(text, { height = 64, cls = '' } = {}) {
 function viewOverview() {
   const u = state.user;
   return `
-    ${pageHead('Scene 1 · Membership lifecycle', `Welcome back, ${esc(firstName(u.name))}`, `${roleLabel(u.role)} · ${esc(u.email)}`)}
+    ${pageHead('Scene 1 · Membership lifecycle', `Welcome back, ${esc(firstName(u.name))}`, `${esc(displayRole(u))} · ${esc(u.email)}`)}
     ${membershipBanner(u.membership)}
+    ${lowStockAlerts()}
     <div class="grid grid-2">
       <div class="stack">${membershipCard(u)}</div>
       ${benefitsCard()}
@@ -892,7 +1035,7 @@ function viewOverview() {
 }
 
 function accessRoleBadge(u) {
-  return u.is_founding_admin ? badge('👑 Founding Admin', 'plum') : badge(roleLabel(u.role), ROLE_TONE[u.role]);
+  return u.is_founding_admin ? badge('👑 Founding Admin', 'plum') : badge(RANK_LABEL[clubRank(u.role, u.membership_status)], RANK_TONE[clubRank(u.role, u.membership_status)]);
 }
 
 // Club Access & Role Management (admins). The server is the authority; this
@@ -902,27 +1045,39 @@ function accessPanel() {
   const data = state.data.users;
   if (!data) return `<section class="card"><div class="card-body">${loadingBlock('Loading club members…')}</div></section>`;
   const founder = data.viewer.is_founding_admin;
-  const rows = data.users.map((u) => {
+  const q = state.ui.accessQuery.trim().toLowerCase();
+  const order = (u) => HIERARCHY.indexOf(clubRank(u.role, u.membership_status));
+  const matching = data.users
+    .filter((u) => !q || `${u.name} ${u.email} ${u.membership_code || ''} ${RANK_LABEL[clubRank(u.role, u.membership_status)]}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.is_founding_admin - a.is_founding_admin) || order(a) - order(b) || a.name.localeCompare(b.name));
+  const pages = Math.max(1, Math.ceil(matching.length / ACCESS_PAGE_SIZE));
+  const page = Math.min(state.ui.accessPage, pages - 1);
+  const shown = matching.slice(page * ACCESS_PAGE_SIZE, (page + 1) * ACCESS_PAGE_SIZE);
+  const rows = shown.map((u) => {
     let control;
     if (u.is_founding_admin) control = '<span class="small muted">🔒 Protected · the Founding Admin’s role never changes</span>';
     else if (u.id === state.user.id) control = '<span class="small muted">This is you · ask the Founding Admin to change your role</span>';
     else if (u.role === 'ADMIN' && !founder) control = '<span class="small muted">🔒 Only the Founding Admin can change an Admin</span>';
     else {
       const draft = state.ui.roleDraft[u.id] || u.role;
+      const scopeDraft = state.ui.scopeDraft[u.id] || u.access_scope || 'ALL';
       const options = ROLES.map((r) => {
         const locked = r === 'ADMIN' && !founder;
         return `<option value="${r}"${r === draft ? ' selected' : ''}${locked ? ' disabled' : ''}>${roleLabel(r)}${locked ? ' (Founding Admin only)' : ''}</option>`;
       }).join('');
+      const scopeOptions = SCOPES.map(([value, label]) => `<option value="${value}"${value === scopeDraft ? ' selected' : ''}>${label}</option>`).join('');
+      const unchanged = draft === u.role && scopeDraft === (u.access_scope || 'ALL');
       control = `<div class="access-control">
           <select id="role-${u.id}" class="select select-sm" data-model="ui.roleDraft.${u.id}" data-rerender="1" aria-label="New role for ${esc(u.name)}"${state.isLoading ? ' disabled' : ''}>${options}</select>
-          ${btn('Update Access', 'updateRole', { data: { id: u.id }, size: 'sm', disabled: draft === u.role, title: draft === u.role ? 'Pick a different role first' : `Make ${u.name} ${roleLabel(draft)}` })}
+          <select id="scope-${u.id}" class="select select-sm" data-model="ui.scopeDraft.${u.id}" data-rerender="1" aria-label="Access scope for ${esc(u.name)}"${state.isLoading ? ' disabled' : ''}>${scopeOptions}</select>
+          ${btn('Update Access', 'updateRole', { data: { id: u.id }, size: 'sm', disabled: unchanged, title: unchanged ? 'Pick a different role or scope first' : `Make ${u.name} ${roleLabel(draft)} · ${SCOPE_LABEL[scopeDraft]}` })}
         </div>`;
     }
     return `<tr>
         <td><div class="person">${avatar(u.name, u.role)}<div><b>${esc(u.name)}</b>${u.id === state.user.id ? ' <span class="small muted">(you)</span>' : ''}<div class="small muted">${esc(u.email)}</div></div></div></td>
         <td>${u.membership_code ? codeChip(u.membership_code) : '<span class="muted">—</span>'}</td>
         <td>${membershipBadge(u.membership_status)}</td>
-        <td>${accessRoleBadge(u)}</td>
+        <td>${accessRoleBadge(u)} ${scopeBadge(u.access_scope)}</td>
         <td>${control}</td>
       </tr>`;
   }).join('');
@@ -931,9 +1086,18 @@ function accessPanel() {
     : 'You can move members between Student, Volunteer and Treasurer. Only the Founding Admin can grant or change Admin access.';
   return `<section class="card">
     <div class="card-head"><h2>🛡️ Club Access & Role Management ${badge('Admin', 'plum')}</h2><span class="sub">${plural(data.count, 'member')} · changes apply on their next click</span></div>
-    <div class="card-body"><div class="note note-plum">${note}</div></div>
+    <div class="card-body stack">
+      <div class="note note-plum">${note}</div>
+      <div class="hierarchy small"><b>Club hierarchy:</b> ${HIERARCHY.map((r) => badge(RANK_LABEL[r], RANK_TONE[r])).join(' <span class="muted">›</span> ')}</div>
+      <div class="row-between">
+        <div style="flex:1;max-width:380px">${input('ui.accessQuery', { id: 'access-q', placeholder: 'Search name, email, code or role…', cls: 'input-search', attrs: 'data-rerender="1" data-search="access" autocomplete="off" aria-label="Search members"' })}</div>
+        <div class="row small"><span class="muted">${matching.length} of ${data.count} · page ${page + 1}/${pages}</span>
+          ${btn('‹ Prev', 'accessPage', { data: { step: -1 }, variant: 'secondary', size: 'sm', mutation: false, disabled: page === 0 })}
+          ${btn('Next ›', 'accessPage', { data: { step: 1 }, variant: 'secondary', size: 'sm', mutation: false, disabled: page >= pages - 1 })}</div>
+      </div>
+    </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Member</th><th>Code</th><th>Membership</th><th>Current role</th><th>Change access</th></tr></thead>
+      <thead><tr><th>Member</th><th>Code</th><th>Membership</th><th>Current role · scope</th><th>Change role & access scope</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
   </section>`;
@@ -1096,6 +1260,7 @@ function viewAuth() {
 }
 
 function membershipBanner(m) {
+  if (isAdmin()) return ''; // the club administrator has lifetime access
   const fee = inr(MEMBERSHIP_FEE);
   if (m.status === 'ACTIVE' && m.renewal_due) {
     return banner('warn', '⏳', `Expiring in ${plural(m.days_remaining, 'day')} — Renew Now (${fee})`,
@@ -1124,7 +1289,23 @@ function savingsLine() {
   return `An active member saves ${inr(saving)} across ${plural(events.length, 'upcoming event')} and ${plural(items.length, 'merch item')}, and unlocks members-only announcements.`;
 }
 
+// The Admin's card: lifetime access, no countdown, no renewal.
+function adminMembershipCard(u) {
+  const passBtn = u.membership.code
+    ? `<div class="mt-8">${btn('🪪 View Digital Pass', 'openPass', { data: { kind: 'member', id: u.id }, variant: 'secondary', size: 'sm', mutation: false })}</div>`
+    : '';
+  return `
+    <div class="member-card status-ACTIVE admin-card">
+      <div class="mc-top"><span class="mc-brand">SKYLINE STUDENT ASSOCIATION</span><span class="badge badge-plum">${esc(displayRole(u))}</span></div>
+      <div><div class="mc-name">${esc(u.name)}</div><div class="mc-code">${u.membership.code ? esc(u.membership.code) : 'ADMIN'}</div></div>
+      <div class="lifetime">LIFETIME ADMIN ACCESS · NO EXPIRY</div>
+      <div class="mc-meta"><div>Access<b>${esc(SCOPE_LABEL[u.access_scope || 'ALL'])}</b></div><div>Role<b>Admin</b></div><div>Since<b>${fmtDate(u.created_at)}</b></div></div>
+    </div>
+    <div class="card"><div class="card-body"><div class="note note-plum">As the club administrator you manage events, merch and the books. Admin access never expires, so there is nothing to renew.</div>${passBtn}</div></div>`;
+}
+
 function membershipCard(u) {
+  if (u.role === 'ADMIN') return adminMembershipCard(u);
   const m = u.membership;
   const active = m.status === 'ACTIVE';
   const fee = inr(MEMBERSHIP_FEE);
@@ -1148,7 +1329,7 @@ function membershipCard(u) {
       <div class="mc-meta">
         <div>Valid until<b>${m.expires_at ? fmtDate(m.expires_at) : '—'}</b></div>
         <div>${active ? 'Days left' : 'Status'}<b>${active ? m.days_remaining : m.status === 'NONE' ? 'No membership' : 'Lapsed'}</b></div>
-        <div>Role<b>${roleLabel(u.role)}</b></div>
+        <div>Role<b>${esc(displayRole(u))}</b></div>
       </div>
       ${active ? progress((m.days_remaining / 365) * 100) : ''}
     </div>
@@ -1223,7 +1404,7 @@ function viewEvents() {
     ${isAdmin() && state.ui.showEventForm ? createEventForm() : ''}
     ${!state.user ? banner('info', '🎟️', 'Sign in to buy tickets', 'Members pay the member price; everyone else pays the guest price.', btn('Sign in', 'openAuth', { data: { mode: 'login' }, mutation: false })) : ''}
     <div class="grid grid-auto">${events.map(eventCard).join('')}</div>
-    ${state.user ? myTickets(mine) : ''}
+    ${state.user && !isAdmin() ? myTickets(mine) : ''}
     ${isStaff() ? checkInDesk() : ''}
   </div>`;
 }
@@ -1234,8 +1415,13 @@ function eventCard(e) {
   const soldOut = e.seats_left <= 0;
   const when = new Date(e.event_date);
 
+  if (isAdmin() && state.ui.editEventId === e.id) return editEventCard(e);
   let action;
-  if (e.my_ticket) action = `${badge("✓ You're going", 'green')} ${codeChip(e.my_ticket.ticket_code)}`;
+  if (isAdmin()) {
+    action = `<div class="admin-view">${badge('📊 Admin Report & Analytics View', 'plum')}
+        <span class="small muted">${e.tickets_sold} tickets issued · ${e.checked_in_count} checked in · ${inr(e.ticket_revenue)} online revenue</span></div>
+      ${btn('✏️ Edit Event', 'editEvent', { data: { id: e.id }, variant: 'secondary', size: 'sm', mutation: false })}`;
+  } else if (e.my_ticket) action = `${badge("✓ You're going", 'green')} ${codeChip(e.my_ticket.ticket_code)}`;
   else if (e.is_past) action = badge('Event ended', 'slate');
   else if (soldOut) action = btn('Sold out', 'buyTicket', { data: { id: e.id }, disabled: true, variant: 'secondary' });
   else if (!state.user) action = btn('Sign in to buy', 'openAuth', { data: { mode: 'login' }, mutation: false });
@@ -1258,6 +1444,30 @@ function eventCard(e) {
       ${isStaff() ? `<div class="event-stats"><div><b>${e.tickets_sold}</b>tickets issued</div><div><b>${e.checked_in_count}</b>checked in</div><div><b>${inr(e.ticket_revenue)}</b>ticket revenue</div></div>` : ''}
       <div class="event-actions">${action}</div>
     </div>
+  </article>`;
+}
+
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function editEventCard(e) {
+  return `<article class="card event-card editing">
+    <div class="card-head"><h2>✏️ Edit Event ${badge('Admin', 'plum')}</h2><span class="sub">${e.seats_sold} seats already sold stay sold</span></div>
+    <form class="card-body form" data-form="editEvent">
+      <div class="form-grid">
+        ${field('Title', input('forms.editEvent.title'), { span2: true, forId: 'forms-editEvent-title' })}
+        ${field('Date & time', input('forms.editEvent.event_date', { type: 'datetime-local' }), { forId: 'forms-editEvent-event_date' })}
+        ${field('Location', input('forms.editEvent.location'), { forId: 'forms-editEvent-location' })}
+        ${field(`Total seats (min ${e.seats_sold})`, input('forms.editEvent.total_seats', { type: 'number', attrs: `min="${Math.max(1, e.seats_sold)}"` }), { forId: 'forms-editEvent-total_seats' })}
+        ${field('Member price (₹)', input('forms.editEvent.member_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-editEvent-member_price' })}
+        ${field('Guest price (₹)', input('forms.editEvent.guest_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-editEvent-guest_price' })}
+        ${field('Description', textarea('forms.editEvent.description'), { span2: true, forId: 'forms-editEvent-description' })}
+      </div>
+      <div class="row">${submitBtn('editEvent', 'Save Changes')}${btn('Cancel', 'cancelEditEvent', { variant: 'secondary', mutation: false })}</div>
+    </form>
   </article>`;
 }
 
@@ -1420,8 +1630,9 @@ function postForm() {
 
 function viewMerch() {
   const merch = state.data.merch;
-  const head = pageHead('Scene 4 · Merch', 'Club Merch Store — Hoodies & Tees',
-    'Each size has its own stock, and the last unit is claimed inside a locked transaction, so two buyers can never get the same hoodie.');
+  const head = pageHead('Scene 4 · Merch', 'Club Merch Store — Hoodies, Tees, Caps, Joggers & Accessories',
+    'Hover a photo to zoom, click for the full-screen viewer. Each size has its own stock, and the last unit is claimed inside a locked transaction.',
+    isAdmin() ? btn(state.ui.productForm === 'new' ? 'Close form' : '+ Add Product', 'productForm', { data: { id: 'new' }, variant: 'secondary', mutation: false }) : '');
   if (!merch) return head + loadingBlock();
 
   let orders;
@@ -1429,9 +1640,135 @@ function viewMerch() {
   else orders = isStaff() ? pickupQueue() : myOrders();
 
   return `${head}<div class="stack">
-    <div class="grid grid-auto">${merch.items.map(productCard).join('')}</div>
+    ${lowStockAlerts()}
+    ${isAdmin() && state.ui.productForm === 'new' ? productForm() : ''}
+    ${isFinance() ? merchAnalyticsPanel() : ''}
+    <div class="grid grid-auto">${merch.items.map((item) => (isAdmin() && String(state.ui.productForm) === String(item.id) ? productForm(item) : productCard(item))).join('')}</div>
     ${orders}
   </div>`;
+}
+
+// Front / back / side / close-up viewer: hover to zoom inside the frame, click for the lightbox.
+function productGallery(item) {
+  const g = item.gallery || { style: /hoodie/i.test(item.name) ? 'hoodie' : 'tee', color: '#1e2a4a', angles: DEFAULT_ANGLES };
+  const angles = g.angles || DEFAULT_ANGLES;
+  const i = Math.min(state.ui.galleryAngle[item.id] || 0, angles.length - 1);
+  const thumbs = angles.map((a, n) => `<button type="button" class="thumb${n === i ? ' active' : ''}" data-action="galleryAngle" data-item="${item.id}" data-index="${n}" aria-label="${esc(a.label)}" title="${esc(a.label)}">${productArt(g.style, a.view, g.color)}</button>`).join('');
+  return `<div class="gallery">
+    <div class="zoom-stage" data-action="openLightbox" data-item="${item.id}" data-index="${i}" title="Hover to zoom · click for full-screen zoom">
+      <div class="zoom-img">${productArt(g.style, angles[i].view, g.color)}</div>
+      <button type="button" class="gal-arrow prev" data-action="galleryStep" data-item="${item.id}" data-step="-1" aria-label="Previous angle">‹</button>
+      <button type="button" class="gal-arrow next" data-action="galleryStep" data-item="${item.id}" data-step="1" aria-label="Next angle">›</button>
+      <span class="gal-label">${esc(angles[i].label)} · ${i + 1}/${angles.length}</span>
+      <span class="gal-hint">🔍 Hover to zoom</span>
+    </div>
+    <div class="thumbs">${thumbs}</div>
+  </div>`;
+}
+
+let lightboxPan = { x: 0, y: 0 };
+
+function lightboxModal() {
+  const lb = state.ui.lightbox;
+  const item = state.data.merch?.items.find((x) => String(x.id) === String(lb.item));
+  if (!item) return '';
+  const g = item.gallery;
+  const angles = g.angles || DEFAULT_ANGLES;
+  const a = angles[lb.index];
+  const thumbs = angles.map((x, n) => `<button type="button" class="thumb${n === lb.index ? ' active' : ''}" data-action="lightboxIndex" data-index="${n}" aria-label="${esc(x.label)}">${productArt(g.style, x.view, g.color)}</button>`).join('');
+  return `<div class="pass-backdrop" data-action="closeLightbox" data-self="1">
+    <div class="lb-dialog" role="dialog" aria-modal="true" aria-label="${esc(item.name)} photo viewer">
+      <div class="lb-head"><div><b>${esc(item.name)}</b><div class="small muted">${esc(a.label)} · ${lb.index + 1}/${angles.length}</div></div>
+        <div class="lb-zoom">${[1, 2, 3].map((z) => `<button type="button" class="pill${lb.zoom === z ? ' active' : ''}" data-action="lightboxZoom" data-zoom="${z}">${z}×</button>`).join('')}</div>
+        <button type="button" class="icon-btn lb-close" data-action="closeLightbox" aria-label="Close">×</button></div>
+      <div class="lb-stage${lb.zoom > 1 ? ' pannable' : ''}">
+        <div class="lb-img" style="transform: translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lb.zoom})">${productArt(g.style, a.view, g.color)}</div>
+        <button type="button" class="gal-arrow prev" data-action="lightboxStep" data-step="-1" aria-label="Previous angle">‹</button>
+        <button type="button" class="gal-arrow next" data-action="lightboxStep" data-step="1" aria-label="Next angle">›</button>
+      </div>
+      <div class="thumbs lb-thumbs">${thumbs}</div>
+      <div class="small muted center">Drag to pan when zoomed · mouse wheel or 1× / 2× / 3× to zoom · ← → to switch angles · Esc to close</div>
+    </div>
+  </div>`;
+}
+
+// Inventory managers and the Admin see every size at or below its threshold.
+function lowStockAlerts() {
+  if (!state.user) return '';
+  const items = state.data.merch?.items || [];
+  const rows = items
+    .filter((i) => isAdmin() || i.assigned_manager?.id === state.user.id)
+    .flatMap((i) => (i.low_stock || []).map((v) => ({ item: i, ...v })));
+  if (!rows.length) return '';
+  const canRestock = (r) => isAdmin() || r.item.assigned_manager?.id === state.user.id;
+  return `<section class="card low-stock">
+    <div class="card-head"><h2>⚠️ Low Inventory Alert</h2><span class="sub">${plural(rows.length, 'size')} at or below the low-stock threshold</span></div>
+    <div class="card-body low-stock-list">${rows.map((r) => `<div class="ls-row">
+        <span class="ls-name"><b>${esc(r.item.name)}</b> · size ${esc(r.size)}</span>
+        <span class="${r.stock_count === 0 ? 'ls-out' : 'ls-low'}">${r.stock_count === 0 ? 'SOLD OUT' : `${r.stock_count} left`}</span>
+        <span class="small muted">threshold ${r.item.low_stock_threshold}${r.item.assigned_manager ? ` · manager ${esc(r.item.assigned_manager.name)}` : ''}</span>
+        ${canRestock(r) ? btn('+ Restock Now (+10)', 'restockNow', { data: { variant: r.variant_id, item: r.item.id }, size: 'sm', variant: 'warn' }) : ''}
+      </div>`).join('')}</div>
+  </section>`;
+}
+
+// Profit & loss and top sellers for a chosen period (Admin and Treasurer).
+function merchAnalyticsPanel() {
+  const a = state.data.merchAnalytics;
+  const pills = MERCH_PERIODS.map(([value, label]) => `<button type="button" class="pill${state.ui.merchPeriod === value ? ' active' : ''}" data-action="merchPeriod" data-period="${value}">${label}</button>`).join('');
+  if (!a) return `<section class="card"><div class="card-body">${loadingBlock('Crunching merch profit & loss…')}</div></section>`;
+  const t = a.totals;
+  const top = Math.max(1, ...a.products.map((p) => p.units_sold));
+  const rows = a.products.map((p) => `<tr>
+      <td class="num">#${p.rank}</td>
+      <td><b>${esc(p.name)}</b><div class="small muted">${esc(CATEGORY_LABEL[p.category] || p.category)} · cost ${inr(p.cost_price)}/unit</div></td>
+      <td><div class="units-bar"><span style="width:${(p.units_sold / top) * 100}%"></span></div><b>${p.units_sold}</b> <span class="small muted">units · ${plural(p.orders, 'order')}</span></td>
+      <td class="num">${inr(p.revenue)}</td>
+      <td class="num">${inr(p.cost)}</td>
+      <td class="num ${p.profit >= 0 ? 'amount-in' : 'amount-out'}">${signedInr(p.profit)}</td>
+      <td class="num">${p.margin_pct}%</td>
+    </tr>`).join('');
+  return `<section class="card">
+    <div class="card-head"><h2>📈 Merch Profit & Loss + Top Sellers ${badge('Admin · Treasurer', 'plum')}</h2><div class="pills">${pills}</div></div>
+    <div class="card-body">
+      <div class="kpis">
+        ${kpi('Units sold', t.units_sold, plural(t.orders, 'order'))}
+        ${kpi('Gross revenue', inr(t.revenue), 'what buyers paid', 'green')}
+        ${kpi('Purchase cost', inr(t.cost), 'cost price × units sold', 'red')}
+        ${kpi('Net profit', signedInr(t.profit), 'revenue − cost', t.profit >= 0 ? 'green' : 'red')}
+        ${kpi('Profit margin', `${t.margin_pct}%`, 'net profit ÷ revenue', 'plum')}
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th class="num">Rank</th><th>Product</th><th>Most sold</th><th class="num">Revenue</th><th class="num">Cost</th><th class="num">Net profit</th><th class="num">Margin</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </section>`;
+}
+
+// Add a product (with opening stock) or edit one, from the Merch page.
+function productForm(item = null) {
+  const people = [['', 'No manager'], ...(state.data.assignees || []).filter((u) => u.role !== 'STUDENT').map((u) => [u.id, `${u.name} (${roleLabel(u.role)})`])];
+  return `<section class="card product-form">
+    <div class="card-head"><h2>${item ? `✏️ Edit ${esc(item.name)}` : '➕ Add a New Product'} ${badge('Admin', 'plum')}</h2>
+      <div class="row">${btn('Cancel', 'productForm', { data: { id: item ? item.id : 'new' }, variant: 'secondary', size: 'sm', mutation: false })}</div></div>
+    <form class="card-body form" data-form="product">
+      <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+        ${field('Product name', input('forms.product.name', { placeholder: 'e.g. Skyline Varsity Jacket' }), { forId: 'forms-product-name' })}
+        ${field('Category', select('forms.product.category', MERCH_CATEGORIES), { forId: 'forms-product-category' })}
+        ${field('Purchase / unit cost (₹)', input('forms.product.cost_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-cost_price' })}
+        ${field('Member price (₹)', input('forms.product.member_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-member_price' })}
+        ${field('Regular price (₹)', input('forms.product.regular_price', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-regular_price' })}
+        ${field('Low-stock threshold', input('forms.product.low_stock_threshold', { type: 'number', attrs: 'min="0"' }), { forId: 'forms-product-low_stock_threshold' })}
+        ${field('Inventory manager', select('forms.product.assigned_manager_id', people), { forId: 'forms-product-assigned_manager_id' })}
+        ${field('Colour (all 4 photos)', input('forms.product.color', { type: 'color' }), { forId: 'forms-product-color' })}
+        ${item ? '' : ['S', 'M', 'L', 'XL'].map((sz) => field(`Opening stock ${sz}`, input(`forms.product.${sz}`, { type: 'number', attrs: 'min="0"' }), { forId: `forms-product-${sz}` })).join('')}
+        ${field('Description', textarea('forms.product.description', { placeholder: 'Fabric, fit, print…' }), { span2: true, forId: 'forms-product-description' })}
+      </div>
+      <div class="note">Front, back, side and close-up photos are generated in the chosen colour for the category. Cost price feeds the profit & loss report.</div>
+      <div>${submitBtn('product', item ? 'Save Product' : 'Add Product')}</div>
+    </form>
+  </section>`;
 }
 
 function productCard(item) {
@@ -1441,7 +1778,6 @@ function productCard(item) {
   const qty = state.ui.quantity[item.id] || 1;
   const maxQty = variant ? Math.min(5, variant.stock_count) : 1;
   const unit = item.your_price ?? item.regular_price;
-  const art = /hoodie/i.test(item.name) ? PRODUCT_ART.hoodie : PRODUCT_ART.tee;
 
   const sizes = item.variants.map((v) => {
     const low = v.stock_count > 0 && v.stock_count <= 3;
@@ -1450,23 +1786,27 @@ function productCard(item) {
   }).join('');
 
   let action;
-  if (!state.user) action = btn('Sign in to order', 'openAuth', { data: { mode: 'login' }, mutation: false, block: true });
+  if (isAdmin()) {
+    action = `<div class="admin-view">${badge('📊 Admin Report & Analytics View', 'plum')}
+      <span class="small muted">${item.units_sold} sold · ${item.total_stock} in stock${item.cost_price !== undefined ? ` · cost ${inr(item.cost_price)} · member margin ${inr(item.member_price - item.cost_price)}/unit` : ''}</span></div>
+      ${btn('✏️ Edit Product', 'productForm', { data: { id: item.id }, variant: 'secondary', size: 'sm', mutation: false })}`;
+  } else if (!state.user) action = btn('Sign in to order', 'openAuth', { data: { mode: 'login' }, mutation: false, block: true });
   else if (!variant) action = btn(item.total_stock ? 'Choose a size' : 'Sold out', 'orderMerch', { data: { item: item.id }, disabled: true, block: true, variant: 'secondary' });
   else action = btn(`Order Now · ${inr(unit * qty)}`, 'orderMerch', { data: { item: item.id }, block: true });
 
   return `<article class="card product">
-    <div class="product-visual">${art}</div>
+    ${productGallery(item)}
     <div class="card-body">
-      <div><h3>${esc(item.name)}</h3><p class="small muted mt-8">${esc(item.description || '')}</p></div>
+      <div><div class="row">${badge(CATEGORY_LABEL[item.category] || item.category, 'blue')}${item.low_stock?.length ? badge(`⚠ ${plural(item.low_stock.length, 'size')} low`, 'amber') : ''}</div><h3 class="mt-8">${esc(item.name)}</h3><p class="small muted mt-8">${esc(item.description || '')}</p></div>
       <div class="price-compare">${priceTile('Member', item.member_price, tier === 'MEMBER')}${priceTile('Regular', item.regular_price, tier === 'REGULAR')}</div>
       <div><div class="row-between"><span class="small strong">Size</span><span class="small muted">${item.total_stock} in stock · ${item.units_sold} sold</span></div><div class="sizes mt-8">${sizes}</div></div>
-      <div class="row-between">
+      ${isAdmin() ? '' : `<div class="row-between">
         <div class="row"><span class="small strong">Qty</span>
           <div class="qty"><button type="button" data-action="qty" data-item="${item.id}" data-delta="-1" aria-label="Decrease quantity"${qty <= 1 ? ' disabled' : ''}>−</button><span>${qty}</span><button type="button" data-action="qty" data-item="${item.id}" data-delta="1" aria-label="Increase quantity"${qty >= maxQty ? ' disabled' : ''}>+</button></div>
         </div>
         ${state.user ? `<span class="small muted">${tier === 'MEMBER' ? `Members save ${inr(item.regular_price - item.member_price)}` : 'Join to save'}</span>` : ''}
-      </div>
-      ${state.user ? `<div class="order-total"><span class="small muted">${tier === 'MEMBER' ? 'Member' : 'Regular'} price × ${qty}</span><b>${inr(unit * qty)}</b></div>` : ''}
+      </div>`}
+      ${state.user && !isAdmin() ? `<div class="order-total"><span class="small muted">${tier === 'MEMBER' ? 'Member' : 'Regular'} price × ${qty}</span><b>${inr(unit * qty)}</b></div>` : ''}
       ${action}
       ${isAdmin() ? restockControl(item) : ''}
     </div>
@@ -1563,13 +1903,13 @@ function pickupQueue() {
 
 function viewTasks() {
   const head = pageHead('Scene 5 · Fundraising', 'Bake Sale Fundraiser Planner',
-    'Unassigned tasks still show up (the board uses a LEFT JOIN). Students can move only the tasks assigned to them.');
+    'The Admin and Treasurer plan the tasks. Club members and volunteers request the ones they want; only the assigned person (or the Admin) moves a task.');
   if (!state.user) return head + signInPrompt('see the fundraiser board');
   const data = state.data.tasks;
   if (!data) return head + loadingBlock();
 
   const campaigns = Object.keys(data.campaigns_summary);
-  if (!campaigns.length) return head + emptyState('🧁', 'No fundraiser tasks yet.') + (isStaff() ? addTaskForm([]) : '');
+  if (!campaigns.length) return head + emptyState('🧁', 'No fundraiser tasks yet.') + (isTaskManager() ? addTaskForm([]) : '');
   const campaign = campaigns.includes(state.ui.campaign) ? state.ui.campaign : campaigns.includes(DEFAULT_CAMPAIGN) ? DEFAULT_CAMPAIGN : campaigns[0];
   const summary = data.campaigns_summary[campaign];
   const tasks = data.tasks.filter((t) => t.campaign_name === campaign);
@@ -1598,13 +1938,48 @@ function viewTasks() {
     </div>`;
   }).join('')}</div>`;
 
-  return `${head}<div class="stack">${switcher}${health}${isStaff() ? addTaskForm(campaigns) : ''}${board}</div>`;
+  return `${head}<div class="stack">${isTaskManager() ? requestQueue() : ''}${switcher}${health}${isTaskManager() ? addTaskForm(campaigns) : ''}${board}</div>`;
+}
+
+// Pending "I'd like to take this task" requests. The Admin approves one, which assigns it.
+function requestQueue() {
+  const pending = (state.data.tasks?.requests || []).filter((r) => r.status === 'PENDING');
+  const rows = pending.length
+    ? pending.map((r) => `<div class="request-row">
+        <div class="person">${avatar(r.user.name, r.user.role)}<div><b>${esc(r.user.name)}</b> ${badge(RANK_LABEL[clubRank(r.user.role, r.user.membership_status)], RANK_TONE[clubRank(r.user.role, r.user.membership_status)])}
+          <div class="small">wants <b>${esc(r.task_title)}</b> · ${relTime(r.created_at)}</div>
+          ${r.note ? `<div class="small muted">“${esc(r.note)}”</div>` : ''}</div></div>
+        <div class="row">${isAdmin()
+    ? `${btn('✓ Approve & Assign', 'reviewRequest', { data: { id: r.id, decision: 'APPROVE' }, variant: 'success', size: 'sm' })}${btn('Reject', 'reviewRequest', { data: { id: r.id, decision: 'REJECT' }, variant: 'danger', size: 'sm' })}`
+    : '<span class="small muted">The Admin approves requests</span>'}</div>
+      </div>`).join('')
+    : '<div class="small muted">No pending requests. Club members and volunteers can request any open task.</div>';
+  return `<section class="card">
+    <div class="card-head"><h2>📥 Pending Task Requests (${pending.length})</h2><span class="sub">Approving assigns the task and closes the other requests for it</span></div>
+    <div class="card-body stack">${rows}</div>
+  </section>`;
+}
+
+function taskRequestArea(t) {
+  if (!canRequestTasks() || t.assigned_to === state.user.id || t.status === 'DONE') return '';
+  const mine = (state.data.tasks?.requests || []).find((r) => r.task_id === t.id && r.user.id === state.user.id);
+  if (mine) {
+    const tone = { PENDING: 'amber', APPROVED: 'green', REJECTED: 'red' }[mine.status];
+    return `<div class="task-request">${badge(`Your request: ${mine.status.toLowerCase()}`, tone)}</div>`;
+  }
+  if (state.ui.requestTaskId === t.id) {
+    return `<form class="task-request form" data-form="taskRequest">
+      ${input('forms.taskRequest.note', { id: `request-note-${t.id}`, placeholder: 'e.g. I can bake 40 brownies on Friday', attrs: 'maxlength="200" aria-label="Note for the Admin"' })}
+      <div class="row">${submitBtn('taskRequest', 'Send Request')}${btn('Cancel', 'cancelTaskRequest', { variant: 'secondary', size: 'sm', mutation: false })}</div>
+    </form>`;
+  }
+  return `<div class="task-request">${btn('✋ Request to Take This Task', 'openTaskRequest', { data: { id: t.id }, variant: 'secondary', size: 'sm', mutation: false })}</div>`;
 }
 
 // Staff assign or reassign right on the card; everyone else sees the name.
 function assigneePicker(t) {
   const people = state.data.assignees || [];
-  const options = people.map((u) => `<option value="${u.id}"${u.id === t.assigned_to ? ' selected' : ''}>${esc(u.name)} · ${roleLabel(u.role)}</option>`).join('');
+  const options = people.map((u) => `<option value="${u.id}"${u.id === t.assigned_to ? ' selected' : ''}>${esc(u.name)} · ${RANK_LABEL[clubRank(u.role, u.membership_status)]}</option>`).join('');
   return `<label class="assign-row${t.assigned_to ? '' : ' unassigned'}">
       ${t.assigned_to ? avatar(t.assignee_name, t.assignee_role) : '<span class="avatar avatar-none" aria-hidden="true">?</span>'}
       <select class="select select-sm" data-assign-task="${t.id}" aria-label="Assigned to: ${esc(t.title)}"${state.isLoading ? ' disabled' : ''}>
@@ -1615,13 +1990,20 @@ function assigneePicker(t) {
 
 function taskCard(t) {
   const mine = t.assigned_to === state.user.id;
-  const canMove = isStaff() || mine;
+  const canMove = isAdmin() || mine;
+  if (isTaskManager() && state.ui.editTaskId === t.id) {
+    return `<form class="task form" data-form="editTask">
+      ${field('Task', input('forms.editTask.title', { id: `edit-task-title-${t.id}` }), { forId: `edit-task-title-${t.id}` })}
+      ${field('Due date', input('forms.editTask.due_date', { id: `edit-task-due-${t.id}`, type: 'date' }), { forId: `edit-task-due-${t.id}` })}
+      <div class="row">${submitBtn('editTask', 'Save')}${btn('Cancel', 'cancelEditTask', { variant: 'secondary', size: 'sm', mutation: false })}</div>
+    </form>`;
+  }
   const assignee = t.assigned_to
     ? `<span class="assignee">${avatar(t.assignee_name, t.assignee_role)}${esc(t.assignee_name)}${mine ? ' (you)' : ''}</span>`
     : '<span class="assignee unassigned">Unassigned</span>';
-  const picker = isStaff() && state.data.assignees ? assigneePicker(t) : '';
+  const picker = isTaskManager() && state.data.assignees ? assigneePicker(t) : '';
   const hint = !t.assigned_to && t.status === 'TODO'
-    ? `<div class="task-hint">${isStaff() ? 'Assign someone above before starting this task.' : 'Waiting for a volunteer to be assigned.'}</div>`
+    ? `<div class="task-hint">${isTaskManager() ? 'Assign someone above, or approve a request, before starting.' : 'Open: request it below if you can help.'}</div>`
     : '';
   const due = t.due_date
     ? `<span class="due${t.is_overdue ? ' overdue' : ''}">${t.is_overdue ? '⚠ Overdue · ' : 'Due '}${fmtDay(t.due_date)}</span>`
@@ -1632,11 +2014,11 @@ function taskCard(t) {
       data: { id: t.id, status: next },
       variant: 'locked',
       size: 'sm',
-      title: 'Only the assignee or a staff member can move this task. Click to watch the server refuse it.',
+      title: 'Only the assigned person or the Admin can move this task. Click to watch the server refuse it.',
     }))).join('');
 
-  const remove = isAdmin()
-    ? btn('🗑 Delete', 'deleteTask', { data: { id: t.id, title: t.title }, variant: 'danger', size: 'sm', title: 'Admin only: permanently remove this task' })
+  const remove = isTaskManager()
+    ? `${btn('✏️', 'editTask', { data: { id: t.id }, variant: 'secondary', size: 'sm', mutation: false, title: 'Edit title and due date' })}${btn('🗑 Delete', 'deleteTask', { data: { id: t.id, title: t.title }, variant: 'danger', size: 'sm', title: 'Admin and Treasurer: permanently remove this task' })}`
     : '';
 
   return `<div class="task${t.is_overdue ? ' overdue' : ''}${t.status === 'DONE' ? ' done' : ''}">
@@ -1645,13 +2027,14 @@ function taskCard(t) {
     <div class="task-meta">${picker ? '' : assignee}${due}</div>
     ${hint}
     <div class="task-actions">${actions}${remove ? `<span class="task-actions-end">${remove}</span>` : ''}</div>
+    ${taskRequestArea(t)}
   </div>`;
 }
 
 function addTaskForm(campaigns) {
-  const people = [['', 'Unassigned'], ...(state.data.assignees || []).map((u) => [u.id, `${u.name} (${roleLabel(u.role)})`])];
+  const people = [['', 'Unassigned (members can request it)'], ...(state.data.assignees || []).map((u) => [u.id, `${u.name} (${RANK_LABEL[clubRank(u.role, u.membership_status)]})`])];
   return `<section class="card">
-    <div class="card-head"><h2>➕ Add Task ${badge('Staff', 'teal')}</h2><span class="sub">New tasks start in To do</span></div>
+    <div class="card-head"><h2>➕ Add Task ${badge('Admin · Treasurer', 'plum')}</h2><span class="sub">New tasks start in To do</span></div>
     <form class="card-body form" data-form="task">
       <div class="form-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         ${field('Task', input('forms.task.title', { placeholder: 'e.g. Print price labels' }), { forId: 'forms-task-title' })}
@@ -1672,6 +2055,7 @@ function viewFinance() {
   if (!state.user) return head + signInPrompt('see reimbursements and the club books');
   return `${head}<div class="stack">
     ${glancePanel()}
+    ${isFinance() ? merchAnalyticsPanel() : ''}
     ${reimbursementsSection()}
     ${ledgerSection()}
   </div>`;
@@ -1902,7 +2286,7 @@ function viewProfile() {
       <div class="stack">${membershipCard(u)}</div>
       <div class="stack">
         <section class="card">
-          <div class="card-head"><h2>👤 Account</h2>${badge(roleLabel(u.role), ROLE_TONE[u.role])}</div>
+          <div class="card-head"><h2>👤 Account</h2><div class="row">${roleBadge(u)}${scopeBadge(u.access_scope)}</div></div>
           <div class="card-body">
             <div class="profile-head">${avatar(u.name, u.role)}<div><b>${esc(u.name)}</b><div class="small muted">${esc(u.email)} · member since ${fmtDate(u.created_at)}</div></div></div>
           </div>
@@ -1939,11 +2323,12 @@ function viewProfile() {
 function renderTopbar() {
   const u = state.user;
   const founder = u?.id === FOUNDING_ADMIN_ID && u.role === 'ADMIN';
+  const rank = u ? rankOf(u) : '';
   const session = u
     ? `${themeToggle('on-dark')}
-       <a class="user-chip" href="#profile" title="My Profile & Settings" aria-label="${esc(u.name)}, ${founder ? 'Founding Admin' : roleLabel(u.role)}: open My Profile & Settings">
+       <a class="user-chip" href="#profile" title="My Profile & Settings" aria-label="${esc(u.name)}, ${esc(displayRole(u))}: open My Profile & Settings">
          <span class="uc-avatar">${avatar(u.name, u.role)}<span class="uc-status" title="Signed in"></span></span>
-         <span class="who"><b>${esc(u.name)}</b><span class="role-pill role-${esc(u.role)}">${founder ? 'Founding Admin' : roleLabel(u.role)}</span></span>
+         <span class="who"><b>${esc(u.name)}</b><span class="role-pill role-${esc(rank)}">${esc(displayRole(u))}</span>${u.access_scope && u.access_scope !== 'ALL' ? `<span class="scope-pill">Scope: ${esc(SCOPE_LABEL[u.access_scope])}</span>` : ''}</span>
          <svg class="uc-chevron" ${SVG_ATTRS}><path d="m6 9 6 6 6-6"/></svg>
        </a>`
     : '';
@@ -2027,8 +2412,8 @@ function memberPass() {
   const body = `<div class="pass-person"><span class="pass-avatar">${esc(initials(u.name))}</span><div><div class="pass-title">${esc(u.name)}</div><div class="pass-sub">${esc(u.email)}</div></div></div>
       <div class="pass-grid">
         ${passField('Member ID', `<span class="mono">${esc(m.code)}</span>`)}
-        ${passField('Role', esc(u.id === FOUNDING_ADMIN_ID && u.role === 'ADMIN' ? 'Founding Admin' : roleLabel(u.role)))}
-        ${passField('Valid until', m.expires_at ? fmtDate(m.expires_at) : '—')}
+        ${passField('Role', esc(displayRole(u)))}
+        ${passField('Valid until', u.role === 'ADMIN' ? 'Lifetime · no expiry' : m.expires_at ? fmtDate(m.expires_at) : '—')}
         ${passField('Status', status)}
       </div>`;
   return passShell('member', 'Official Member ID Pass', body, m.code, 'Door staff scan this code, or type it into Door Member Lookup, to verify membership in under a second.');
@@ -2053,6 +2438,34 @@ function voucherPass(id) {
   return passShell('voucher', 'Official Treasurer Payment Voucher', body, r.receipt_reference, 'Approval and its ledger row were written in one transaction. The barcode carries the receipt reference.');
 }
 
+// ============================================================================ confirmation dialog
+
+let pendingConfirm = null;
+
+// Reusable "are you sure?" dialog: onConfirm runs only after the user agrees.
+function confirmAction({ title, message, confirmLabel = 'Confirm', tone = 'primary', onConfirm }) {
+  pendingConfirm = onConfirm;
+  state.ui.confirm = { title, message, confirmLabel, tone };
+  renderModal();
+  requestAnimationFrame(() => document.querySelector('.confirm-dialog [data-action="confirmYes"]')?.focus());
+  return null;
+}
+
+function confirmModal() {
+  const c = state.ui.confirm;
+  return `<div class="pass-backdrop" data-action="confirmNo" data-self="1">
+    <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
+      <div class="confirm-icon" aria-hidden="true">${c.tone === 'danger' ? '⚠️' : '❔'}</div>
+      <h2 id="confirm-title">${esc(c.title)}</h2>
+      <p id="confirm-msg">${esc(c.message)}</p>
+      <div class="confirm-actions">
+        <button type="button" class="btn btn-secondary" data-action="confirmNo">Cancel</button>
+        <button type="button" class="btn btn-${c.tone === 'danger' ? 'danger-solid' : 'primary'}" data-action="confirmYes">${esc(c.confirmLabel)}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 const PASS_BUILDERS = { ticket: ticketPass, member: memberPass, voucher: voucherPass };
 
 function passModal() {
@@ -2071,9 +2484,16 @@ function passModal() {
 }
 
 function renderModal() {
-  const html = passModal();
-  if (!html) state.ui.pass = null;
-  document.body.classList.toggle('has-pass', Boolean(html));
+  let html = '';
+  let pass = '';
+  if (state.ui.confirm) html = confirmModal();
+  else if (state.ui.lightbox) html = lightboxModal();
+  else {
+    pass = passModal();
+    if (!pass) state.ui.pass = null;
+    html = pass;
+  }
+  document.body.classList.toggle('has-pass', Boolean(pass));
   patch(document.getElementById('modal-root'), html);
 }
 
@@ -2159,7 +2579,14 @@ function isNarrowScreen() {
 // ============================================================================ event handlers
 
 const ACTIONS = {
-  logout: () => {
+  logout: () => confirmAction({
+    title: 'Sign out?',
+    message: 'Are you sure you want to sign out of your Skyline account?',
+    confirmLabel: 'Sign Out',
+    tone: 'danger',
+    onConfirm: () => ACTIONS.signOutNow(),
+  }),
+  signOutNow: () => {
     clearSession();
     state.ui.authView = 'signin';
     state.ui.navOpen = false;
@@ -2283,23 +2710,91 @@ const ACTIONS = {
     }),
     refresh: () => loadTasks(),
   }),
-  deleteTask: ({ id, title }) => {
-    if (!window.confirm(`Delete the task “${title}”? This can't be undone.`)) return null;
-    return mutate(`deleteTask:${id}:${title}`, 'DELETE', `/api/tasks/${id}`, undefined, {
+  deleteTask: ({ id, title }) => confirmAction({
+    title: 'Delete this task?',
+    message: `Delete “${title}”? This can't be undone.`,
+    confirmLabel: 'Delete Task',
+    tone: 'danger',
+    onConfirm: () => mutate(`deleteTask:${id}:${title}`, 'DELETE', `/api/tasks/${id}`, undefined, {
       success: (d) => ({ title: 'Task Deleted', message: `“${d.deleted.title}” was removed from ${d.deleted.campaign_name}.` }),
       refresh: () => loadTasks(),
-    });
+    }),
+  }),
+  confirmYes: async () => {
+    const run = pendingConfirm;
+    pendingConfirm = null;
+    state.ui.confirm = null;
+    renderModal();
+    await run?.();
+  },
+  confirmNo: () => {
+    pendingConfirm = null;
+    state.ui.confirm = null;
+    renderModal();
   },
   updateRole: ({ id }) => {
     const user = state.data.users?.users.find((u) => u.id === Number(id));
     const role = state.ui.roleDraft[id];
-    if (!user || !role || role === user.role) return null;
-    return mutate(`updateRole:${id}`, 'PATCH', `/api/users/${id}/role`, { role }, {
-      success: (d) => ({ title: 'Access Updated', message: `${d.user.name} is now ${roleLabel(d.user.role)} (was ${roleLabel(d.previous_role)}). It applies on their next click.` }),
-      onError: () => { state.ui.roleDraft[id] = user.role; },
-      refresh: () => loadUsers(),
+    const scope = state.ui.scopeDraft[id] || 'ALL';
+    if (!user || !role || (role === user.role && scope === (user.access_scope || 'ALL'))) return null;
+    return confirmAction({
+      title: 'Change access?',
+      message: `Make ${user.name} ${roleLabel(role)} with ${SCOPE_LABEL[scope]}? It applies on their next click.`,
+      confirmLabel: 'Update Access',
+      onConfirm: () => mutate(`updateRole:${id}`, 'PATCH', `/api/users/${id}/role`, { role, access_scope: scope }, {
+        success: (d) => ({ title: 'Access Updated', message: `${d.user.name} is now ${roleLabel(d.user.role)} · ${SCOPE_LABEL[d.user.access_scope]} (was ${roleLabel(d.previous_role)} · ${SCOPE_LABEL[d.previous_scope]}).` }),
+        onError: () => {
+          state.ui.roleDraft[id] = user.role;
+          state.ui.scopeDraft[id] = user.access_scope || 'ALL';
+        },
+        refresh: () => loadUsers(),
+      }),
     });
   },
+  accessPage: ({ step }) => {
+    state.ui.accessPage = Math.max(0, state.ui.accessPage + Number(step));
+    renderMain();
+  },
+  editEvent: ({ id }) => {
+    const e = (state.data.events || []).find((ev) => String(ev.id) === String(id));
+    if (!e) return;
+    state.ui.editEventId = e.id;
+    state.forms.editEvent = {
+      title: e.title, event_date: toLocalInput(e.event_date), location: e.location, total_seats: String(e.total_seats),
+      member_price: String(e.member_price), guest_price: String(e.guest_price), description: e.description || '',
+    };
+    renderMain();
+  },
+  cancelEditEvent: () => {
+    state.ui.editEventId = null;
+    renderMain();
+  },
+  editTask: ({ id }) => {
+    const t = state.data.tasks?.tasks.find((x) => String(x.id) === String(id));
+    if (!t) return;
+    state.ui.editTaskId = t.id;
+    state.forms.editTask = { title: t.title, due_date: t.due_date || '' };
+    renderMain();
+  },
+  cancelEditTask: () => {
+    state.ui.editTaskId = null;
+    renderMain();
+  },
+  openTaskRequest: ({ id }) => {
+    state.ui.requestTaskId = Number(id);
+    state.forms.taskRequest = blankForms().taskRequest;
+    renderMain();
+  },
+  cancelTaskRequest: () => {
+    state.ui.requestTaskId = null;
+    renderMain();
+  },
+  reviewRequest: ({ id, decision }) => mutate(`reviewRequest:${id}:${decision}`, 'PATCH', `/api/tasks/requests/${id}/review`, { decision }, {
+    success: (d) => (d.request.status === 'APPROVED'
+      ? { title: 'Task Assigned', message: `“${d.task.title}” is now with ${d.request.user.name}.${d.other_requests_rejected ? ` ${plural(d.other_requests_rejected, 'other request')} closed.` : ''}` }
+      : { title: 'Request Rejected', message: `${d.request.user.name}'s request for “${d.request.task_title}” was declined.` }),
+    refresh: () => loadTasks(),
+  }),
   ledgerFocus: async ({ category }) => {
     const same = state.ui.ledgerCategory === category && !state.ui.ledgerType;
     state.ui.ledgerCategory = same ? '' : category;
@@ -2308,6 +2803,68 @@ const ACTIONS = {
     renderMain();
     if (!same) document.getElementById('ledger-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
+  galleryAngle: ({ item, index }) => {
+    state.ui.galleryAngle[item] = Number(index);
+    renderMain();
+  },
+  galleryStep: ({ item, step }) => {
+    const found = state.data.merch?.items.find((i) => String(i.id) === String(item));
+    const n = (found?.gallery?.angles || DEFAULT_ANGLES).length;
+    state.ui.galleryAngle[item] = ((state.ui.galleryAngle[item] || 0) + Number(step) + n) % n;
+    renderMain();
+  },
+  openLightbox: ({ item, index }) => {
+    lightboxPan = { x: 0, y: 0 };
+    state.ui.lightbox = { item: Number(item), index: Number(index) || 0, zoom: 1 };
+    renderModal();
+  },
+  closeLightbox: () => {
+    state.ui.lightbox = null;
+    renderModal();
+  },
+  lightboxZoom: ({ zoom }) => {
+    lightboxPan = { x: 0, y: 0 };
+    state.ui.lightbox.zoom = Number(zoom);
+    renderModal();
+  },
+  lightboxStep: ({ step }) => {
+    const lb = state.ui.lightbox;
+    const item = state.data.merch?.items.find((x) => x.id === lb.item);
+    const n = (item?.gallery?.angles || DEFAULT_ANGLES).length;
+    lb.index = (lb.index + Number(step) + n) % n;
+    lightboxPan = { x: 0, y: 0 };
+    renderModal();
+  },
+  lightboxIndex: ({ index }) => {
+    state.ui.lightbox.index = Number(index);
+    lightboxPan = { x: 0, y: 0 };
+    renderModal();
+  },
+  productForm: ({ id }) => {
+    const open = String(state.ui.productForm) === String(id);
+    state.ui.productForm = open ? null : id === 'new' ? 'new' : Number(id);
+    if (!open) {
+      const item = id === 'new' ? null : state.data.merch?.items.find((i) => String(i.id) === String(id));
+      state.forms.product = item
+        ? {
+          ...blankForms().product, name: item.name, category: item.category in CATEGORY_LABEL ? item.category : 'HOODIES', description: item.description || '',
+          cost_price: String(item.cost_price ?? ''), member_price: String(item.member_price), regular_price: String(item.regular_price),
+          low_stock_threshold: String(item.low_stock_threshold), assigned_manager_id: item.assigned_manager ? String(item.assigned_manager.id) : '', color: item.gallery?.color || '#1e2a4a',
+        }
+        : blankForms().product;
+    }
+    renderMain();
+  },
+  merchPeriod: async ({ period }) => {
+    state.ui.merchPeriod = period;
+    renderMain();
+    await loadMerchAnalytics();
+    renderMain();
+  },
+  restockNow: ({ variant, item }) => mutate(`restockNow:${variant}:${item}`, 'PATCH', `/api/merch/variants/${variant}/restock`, { add_quantity: 10 }, {
+    success: (d) => ({ title: 'Size Restocked', message: `${d.item.name} size ${d.variant.size}: ${d.variant.previous_stock} → ${d.variant.stock_count} in stock.` }),
+    refresh: () => Promise.all([loadMerchItems(), loadMerchAnalytics()]),
+  }),
   openPass: ({ kind, id }) => {
     state.ui.pass = { kind, id };
     renderModal();
@@ -2397,7 +2954,13 @@ const FORMS = {
     success: (d) => ({ title: 'Account Found', message: `${d.account.name} signs in with ${d.account.email}.` }),
     refresh: () => null,
   }),
-  profileName: () => mutate('form:profileName', 'PATCH', '/api/auth/profile', { name: state.forms.profile.name }, {
+  profileName: () => confirmAction({
+    title: 'Update your name?',
+    message: 'Are you sure you want to update your profile name?',
+    confirmLabel: 'Save Name',
+    onConfirm: () => FORMS.profileNameNow(),
+  }),
+  profileNameNow: () => mutate('form:profileName', 'PATCH', '/api/auth/profile', { name: state.forms.profile.name }, {
     success: (d) => ({ title: 'Profile Updated', message: `Your name is now ${d.user.name}.` }),
     refresh: async () => {
       await refreshSession();
@@ -2410,15 +2973,66 @@ const FORMS = {
       infoToast('The new password and its confirmation don’t match.', 'Check Your Password');
       return null;
     }
-    return mutate('form:profilePassword', 'PATCH', '/api/auth/profile', { current_password: f.current, new_password: f.next }, {
-      success: { title: 'Password Changed', message: 'Use your new password the next time you sign in.' },
-      onSuccess: () => {
-        state.forms.password = blankForms().password;
-      },
-      refresh: () => null,
+    return confirmAction({
+      title: 'Change your password?',
+      message: 'Are you sure you want to change your account password?',
+      confirmLabel: 'Update Password',
+      onConfirm: () => mutate('form:profilePassword', 'PATCH', '/api/auth/profile', { current_password: f.current, new_password: f.next }, {
+        success: { title: 'Password Changed', message: 'Use your new password the next time you sign in.' },
+        onSuccess: () => {
+          state.forms.password = blankForms().password;
+        },
+        refresh: () => null,
+      }),
     });
   },
   checkin: () => checkIn(state.forms.checkin.code, 'form:checkin'),
+  product: () => {
+    const f = state.forms.product;
+    const editing = state.ui.productForm !== 'new';
+    const body = {
+      name: f.name, category: f.category, description: f.description || null,
+      cost_price: toNumber(f.cost_price), member_price: toNumber(f.member_price), regular_price: toNumber(f.regular_price),
+      low_stock_threshold: toNumber(f.low_stock_threshold), assigned_manager_id: f.assigned_manager_id ? Number(f.assigned_manager_id) : null, color: f.color,
+    };
+    if (!editing) body.stock = { S: toNumber(f.S), M: toNumber(f.M), L: toNumber(f.L), XL: toNumber(f.XL) };
+    return mutate('form:product', editing ? 'PATCH' : 'POST', editing ? `/api/merch/items/${state.ui.productForm}` : '/api/merch/items', body, {
+      success: (d) => ({ title: editing ? 'Product Updated' : 'Product Added', message: `${d.item.name} is ${editing ? 'saved' : 'now in the store'}.` }),
+      onSuccess: () => {
+        state.ui.productForm = null;
+        state.forms.product = blankForms().product;
+      },
+      refresh: () => Promise.all([loadMerchItems(), loadMerchAnalytics()]),
+    });
+  },
+  editEvent: () => {
+    const f = state.forms.editEvent;
+    const id = state.ui.editEventId;
+    const when = new Date(f.event_date);
+    return mutate('form:editEvent', 'PATCH', `/api/events/${id}`, {
+      title: f.title,
+      description: f.description || null,
+      event_date: Number.isNaN(when.getTime()) ? f.event_date : when.toISOString(),
+      location: f.location,
+      total_seats: toNumber(f.total_seats),
+      member_price: toNumber(f.member_price),
+      guest_price: toNumber(f.guest_price),
+    }, {
+      success: (d) => ({ title: 'Event Updated', message: `“${d.event.title}” now has ${d.event.seats_left} of ${d.event.total_seats} seats left.` }),
+      onSuccess: () => { state.ui.editEventId = null; },
+      refresh: () => Promise.all([loadEvents(), loadDesk()]),
+    });
+  },
+  editTask: () => mutate('form:editTask', 'PATCH', `/api/tasks/${state.ui.editTaskId}`, { title: state.forms.editTask.title, due_date: state.forms.editTask.due_date || null }, {
+    success: (d) => ({ title: 'Task Updated', message: `“${d.task.title}” saved.` }),
+    onSuccess: () => { state.ui.editTaskId = null; },
+    refresh: () => loadTasks(),
+  }),
+  taskRequest: () => mutate('form:taskRequest', 'POST', `/api/tasks/${state.ui.requestTaskId}/request`, { note: state.forms.taskRequest.note }, {
+    success: (d) => ({ title: 'Request Sent', message: `The Admin will review your request for “${d.request.task_title}”.` }),
+    onSuccess: () => { state.ui.requestTaskId = null; },
+    refresh: () => loadTasks(),
+  }),
   event: () => {
     const f = state.forms.event;
     const when = new Date(f.event_date);
@@ -2534,9 +3148,66 @@ document.addEventListener('submit', (event) => {
   FORMS[form.dataset.form]?.();
 });
 
+// Hover (or touch-drag) zoom inside a product photo, like a store's magnifier.
+function zoomAt(stage, clientX, clientY) {
+  const r = stage.getBoundingClientRect();
+  stage.style.setProperty('--zx', `${(((clientX - r.left) / r.width) * 100).toFixed(1)}%`);
+  stage.style.setProperty('--zy', `${(((clientY - r.top) / r.height) * 100).toFixed(1)}%`);
+  stage.classList.add('zooming');
+}
+document.addEventListener('mousemove', (event) => {
+  const stage = event.target.closest?.('.zoom-stage');
+  if (stage && !event.target.closest('.gal-arrow')) zoomAt(stage, event.clientX, event.clientY);
+  else document.querySelectorAll('.zoom-stage.zooming').forEach((s) => s.classList.remove('zooming'));
+});
+document.addEventListener('mouseout', (event) => {
+  const stage = event.target.closest?.('.zoom-stage');
+  if (stage && !stage.contains(event.relatedTarget)) stage.classList.remove('zooming');
+});
+document.addEventListener('touchmove', (event) => {
+  const stage = event.target.closest?.('.zoom-stage');
+  if (stage && event.touches[0]) zoomAt(stage, event.touches[0].clientX, event.touches[0].clientY);
+}, { passive: true });
+document.addEventListener('touchend', () => document.querySelectorAll('.zoom-stage.zooming').forEach((s) => s.classList.remove('zooming')));
+
+// Lightbox: drag to pan when zoomed, wheel to zoom.
+let panStart = null;
+document.addEventListener('pointerdown', (event) => {
+  const stage = event.target.closest?.('.lb-stage.pannable');
+  if (!stage || event.target.closest('.gal-arrow')) return;
+  panStart = { x: event.clientX - lightboxPan.x, y: event.clientY - lightboxPan.y, stage };
+  stage.setPointerCapture?.(event.pointerId);
+});
+document.addEventListener('pointermove', (event) => {
+  if (!panStart || !state.ui.lightbox) return;
+  const zoom = state.ui.lightbox.zoom;
+  const r = panStart.stage.getBoundingClientRect();
+  const maxX = ((zoom - 1) * r.width) / 2;
+  const maxY = ((zoom - 1) * r.height) / 2;
+  lightboxPan = {
+    x: Math.max(-maxX, Math.min(maxX, event.clientX - panStart.x)),
+    y: Math.max(-maxY, Math.min(maxY, event.clientY - panStart.y)),
+  };
+  const img = panStart.stage.querySelector('.lb-img');
+  if (img) img.style.transform = `translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${zoom})`;
+});
+document.addEventListener('pointerup', () => { panStart = null; });
+document.addEventListener('wheel', (event) => {
+  if (!state.ui.lightbox || !event.target.closest?.('.lb-stage')) return;
+  event.preventDefault();
+  const next = Math.max(1, Math.min(3, state.ui.lightbox.zoom + (event.deltaY < 0 ? 1 : -1)));
+  if (next !== state.ui.lightbox.zoom) ACTIONS.lightboxZoom({ zoom: next });
+}, { passive: false });
+
 document.addEventListener('keydown', (event) => {
+  if (state.ui.lightbox && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    ACTIONS.lightboxStep({ step: event.key === 'ArrowLeft' ? -1 : 1 });
+    return;
+  }
   if (event.key !== 'Escape') return;
-  if (state.ui.pass) ACTIONS.closePass();
+  if (state.ui.confirm) ACTIONS.confirmNo();
+  else if (state.ui.lightbox) ACTIONS.closeLightbox();
+  else if (state.ui.pass) ACTIONS.closePass();
   else if (state.ui.navOpen) ACTIONS.closeNav();
 });
 

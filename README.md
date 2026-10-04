@@ -4,7 +4,7 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
 - **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
-- **Proof:** 7 automated verification suites (229 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Proof:** 8 automated verification suites (255 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -22,6 +22,22 @@ Captured from the running app at 1280×800 (light and dark themes) using the see
 | ![Treasurer finance at-a-glance panel in dark mode](docs/screenshots/05-treasurer-finance-at-a-glance.png) | |
 
 ---
+
+## What's new in the final sprint
+
+| Area | What it does | API |
+|---|---|---|
+| **Event editing** | The Admin edits title, date, venue, prices and capacity inline on each event card. Seats already sold stay sold: `seats_left` moves with `total_seats`, and capacity can't drop below seats sold. | `PATCH /api/events/:id` |
+| **Admins don't buy** | The Admin sees an **Admin Report & Analytics View** on events and products instead of Buy/Order buttons, and the server refuses admin purchases (`403`). The Admin's card shows **LIFETIME ADMIN ACCESS · NO EXPIRY**, with no countdown or renewal. | `POST …/tickets`, `POST /api/merch/orders` |
+| **Club hierarchy** | Admin › Treasurer › **Student · Club Member** › Volunteer › **Student (Non-Member)**. A student's label comes from their live membership and is shown on pills, badges and tables. | |
+| **Bake-sale permissions** | Only the Admin and Treasurer create, edit, assign or delete tasks. Only the assigned person (or the Admin) moves a task. | `POST/PATCH/DELETE /api/tasks…` |
+| **Task requests** | Club members and volunteers press **✋ Request to Take This Task** with a note. The Admin's **Pending Task Requests** queue has **Approve & Assign**, which assigns the task and rejects the other pending requests for it, in one transaction. | `POST /api/tasks/:id/request`, `PATCH /api/tasks/requests/:id/review` |
+| **Scoped access** | The Founding Admin gives each person a role **and** an access scope: Full Club, Events, Merch, Bake Sale or Finance only. Outside it the server answers `403 "Your admin access is scoped strictly to: …"`. | `PATCH /api/users/:id/role` (`access_scope`), `requireScope()` |
+| **5-category merch** | Hoodies, T-Shirts, Caps, Pants / Joggers and Accessories, each with cost price, low-stock threshold, inventory manager and a 4-angle gallery (front, back, side, close-up). Hover zooms inside the photo; a click opens a lightbox with 1× / 2× / 3× zoom, drag-to-pan, wheel zoom and arrow keys. | `POST/PATCH /api/merch/items` |
+| **Low-stock alerts** | Any size at or below its threshold appears in a **⚠️ Low Inventory Alert** on the Admin's and the item manager's dashboard, with **+ Restock Now**. A manager can restock their own items. | `GET /api/merch/items` (`low_stock`) |
+| **Profit & loss** | Units sold, revenue, purchase cost (cost price × units), net profit and margin per product, ranked by units sold, for the last 7, 30 or 90 days or all time. Shown on the Merch and Finance pages for the Admin and Treasurer. | `GET /api/merch/analytics?period=7d\|30d\|90d\|all` |
+| **Confirmation dialogs** | Sign Out, Save Name, Update Password, Update Access and Delete Task each ask "are you sure?" first. | |
+| **105-user dataset** | `npm run seed -- --reset` loads the 5 named accounts (IDs 1–5) plus 100 more students, along with dues, tickets, merch orders across 7, 30 and 90 days, and 3 pending task requests. The access table has search and pages. The test suites use a compact 5-user profile (`SEED_PROFILE=compact`) so their exact counts stay stable; `verify-phase8.js` checks the full profile. | |
 
 ## The six scenes and how they connect
 
@@ -320,7 +336,7 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 7 suites on better-sqlite3 (229 checks, ~20 s)
+npm run verify:fast          # all 8 suites on better-sqlite3 (255 checks, ~25 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows
@@ -334,6 +350,7 @@ npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic ro
 | `verify-phase4.js` | Schema migration, task board, reimbursements, Treasurer approvals and the no-self-approval rule, double-payout race, ledger integrity |
 | `verify-phase5.js` | Static client, offline guarantee, no file leaks, per-viewer pricing fields |
 | `verify-phase6.js` | CSV export (Treasurer/Admin only) and formula-injection guard, live index proof, role separation, account recovery and profile, the semester-at-a-glance numbers, task moves in every direction with the unassigned guard and admin delete, the Founding Admin role hierarchy with live role changes, the TREASURER role migration, and a security and edge-case sweep |
+| `verify-phase8.js` | Event editing, admin no-buy, task permissions and the request/approve workflow, scoped admin access, products, low stock, P&L maths, and the full 105-user seed |
 | `verify-phase7.js` | Student ledger privacy (own rows full; others masked, even after a rename; staff unmasked), admin restock (validation, 403/404, a sold-out size selling again, 5 concurrent restocks all landing), voucher ledger links, and the passes: print stylesheet, offline guarantee, and every barcode decoded back to its code with a valid checksum |
 
 Every suite starts a real `node server.js` on a random port against a temporary database. Port 3000 and `skyline.db` are never touched.

@@ -142,11 +142,13 @@ router.get('/', requireAuth, (req, res) => {
 
 // People a task can be assigned to, for the "Add Task" picker. Staff only.
 router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
+  // Club hierarchy: Admin > Treasurer > Student · Club Member > Volunteer > Student (Non-Member).
+  const rank = (u) => ({ ADMIN: 0, TREASURER: 1, VOLUNTEER: 3 }[u.role] ?? (u.membership_status === 'ACTIVE' ? 2 : 4));
   const users = db
-    .prepare(`
-      SELECT id, name, role FROM users
-      ORDER BY CASE role WHEN 'VOLUNTEER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, name`)
-    .all();
+    .prepare('SELECT id, name, role, membership_code, membership_status, membership_expires_at FROM users ORDER BY name')
+    .all()
+    .map((u) => ({ id: u.id, name: u.name, role: u.role, membership_status: membershipSnapshot(u).status }))
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   res.json({ users });
 });
 
