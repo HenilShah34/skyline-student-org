@@ -1380,7 +1380,7 @@ function lookupPanel() {
   return `<section class="card">
     <div class="card-head"><h2>🚪 Door Member Lookup ${badge('Door Verification', 'teal')}</h2><span class="sub">Search by name, email or member code</span></div>
     <div class="card-body">
-      ${input('ui.lookupQuery', { id: 'lookup-q', placeholder: 'Search by name, email or SKY-2026-XXX…', cls: 'input-search input-lg', attrs: 'data-search="lookup" autocomplete="off" aria-label="Search members"' })}
+      ${input('ui.lookupQuery', { id: 'lookup-q', placeholder: 'Search by name, email or SKY-2026-XXX…  (press / to jump here)', cls: 'input-search input-lg', attrs: 'data-search="lookup" autocomplete="off" aria-label="Search members"' })}
       <div class="small muted mt-8">${status}</div>
     </div>
     <div class="table-wrap"><table>
@@ -1540,7 +1540,8 @@ function checkInDesk() {
   return `<section class="card">
     <div class="card-head">
       <h2>🛂 Door Ticket Scanner & Check-In Desk ${badge('Staff', 'teal')}</h2>
-      <div class="row"><label class="small strong" for="desk-event">Event</label>${select('ui.deskEventId', options, { id: 'desk-event', attrs: 'data-reload="desk"' })}</div>
+      <div class="row"><label class="small strong" for="desk-event">Event</label>${select('ui.deskEventId', options, { id: 'desk-event', attrs: 'data-reload="desk"' })}
+        ${btn('⬇ Export Attendee Roster (CSV)', 'exportRoster', { variant: 'secondary', size: 'sm', mutation: false, disabled: !desk?.tickets.length, title: 'Download the attendee list shown below as a CSV file' })}</div>
     </div>
     <div class="card-body stack" style="gap:14px">
       <div class="kpis">
@@ -1878,7 +1879,9 @@ function pickupQueue() {
     : `<tr><td colspan="9">${emptyState('📦', data ? 'No orders match.' : 'Loading…')}</td></tr>`;
 
   return `<section class="card">
-    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Staff', 'teal')}</h2><span class="sub">Each handover records who gave it out and when</span></div>
+    <div class="card-head"><h2>📦 Desk Pickup Queue ${badge('Staff', 'teal')}</h2>
+      <div class="row"><span class="sub">Each handover records who gave it out and when</span>
+        ${btn('⬇ Export Orders (CSV)', 'exportOrders', { variant: 'secondary', size: 'sm', mutation: false, disabled: !data?.orders.length, title: 'Download the orders shown below as a CSV file' })}</div></div>
     <div class="card-body stack" style="gap:14px">
       <div class="kpis">
         ${kpi('Orders', s ? s.total_orders : '—')}
@@ -2506,6 +2509,30 @@ function renderToasts() {
     </div>`).join(''));
 }
 
+// ---- csv:start
+// Spreadsheet-safe CSV built in the browser: fields with commas, quotes or line
+// breaks are quoted, and text a spreadsheet would run as a formula (= + - @)
+// gets a leading apostrophe, the same guard the server's ledger export uses.
+function csvCell(value) {
+  let text = value === null || value === undefined ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function toCsv(header, rows) {
+  return `${[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+}
+// ---- csv:end
+
+function slug(text) {
+  return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'export';
+}
+
+// A UTF-8 BOM keeps ₹ and names readable when Excel opens the file.
+function downloadCsv(filename, header, rows) {
+  saveBlob(new Blob(['\ufeff', toCsv(header, rows)], { type: 'text/csv;charset=utf-8' }), filename);
+}
+
 // Hands a downloaded Blob to the browser as a file.
 function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -2865,6 +2892,28 @@ const ACTIONS = {
     success: (d) => ({ title: 'Size Restocked', message: `${d.item.name} size ${d.variant.size}: ${d.variant.previous_stock} → ${d.variant.stock_count} in stock.` }),
     refresh: () => Promise.all([loadMerchItems(), loadMerchAnalytics()]),
   }),
+  exportRoster: () => {
+    const desk = state.data.desk;
+    if (!desk?.tickets.length) return;
+    const rows = desk.tickets.map((t) => [
+      t.ticket_code, t.attendee.name, t.attendee.email, t.attendee.membership.status, t.attendee.membership.code || '',
+      t.price_paid, t.checked_in ? 'CHECKED_IN' : 'NOT_ARRIVED', t.checked_in_at || '', t.created_at,
+    ]);
+    downloadCsv(`roster-${slug(desk.event.title)}-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['ticket_code', 'attendee_name', 'email', 'membership_status', 'membership_code', 'price_paid', 'door_status', 'checked_in_at', 'purchased_at'], rows);
+    infoToast(`${plural(rows.length, 'attendee')} for ${desk.event.title}${desk.query ? ` matching “${desk.query}”` : ''} saved as CSV.`, 'Roster Exported');
+  },
+  exportOrders: () => {
+    const data = state.data.orders;
+    if (!data?.orders.length) return;
+    const rows = data.orders.map((o) => [
+      o.order_code, o.created_at, o.buyer?.name || '', o.buyer?.email || '', o.item_name, o.size, o.quantity, o.unit_price, o.total_paid,
+      o.fulfillment_status, o.picked_up_by?.name || '', o.picked_up_at || '',
+    ]);
+    downloadCsv(`merch-orders-${state.ui.orderStatus ? `${state.ui.orderStatus.toLowerCase()}-` : ''}${new Date().toISOString().slice(0, 10)}.csv`,
+      ['order_code', 'ordered_at', 'buyer_name', 'buyer_email', 'item', 'size', 'quantity', 'unit_price', 'total_paid', 'status', 'handed_over_by', 'picked_up_at'], rows);
+    infoToast(`${plural(rows.length, 'order')} saved as CSV.`, 'Orders Exported');
+  },
   openPass: ({ kind, id }) => {
     state.ui.pass = { kind, id };
     renderModal();
@@ -3198,6 +3247,19 @@ document.addEventListener('wheel', (event) => {
   const next = Math.max(1, Math.min(3, state.ui.lightbox.zoom + (event.deltaY < 0 ? 1 : -1)));
   if (next !== state.ui.lightbox.zoom) ACTIONS.lightboxZoom({ zoom: next });
 }, { passive: false });
+
+// "/" jumps to the active tab's search box, unless you're already typing somewhere.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+  if (state.ui.confirm || state.ui.lightbox || state.ui.pass) return;
+  const search = [...document.querySelectorAll('#main input[data-search]')].find((i) => i.offsetParent !== null);
+  if (!search) return;
+  event.preventDefault();
+  search.focus();
+  search.select();
+});
 
 document.addEventListener('keydown', (event) => {
   if (state.ui.lightbox && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {

@@ -6,7 +6,9 @@
 // full 105-user seed profile. Runs the real server against throwaway databases.
 
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { check, section, summarize, tempDbPath, removeDb, startServer, stopServer } = require('./verify-helpers');
 
 const DB_FILE = tempDbPath('verify8');
@@ -156,6 +158,19 @@ async function run() {
   const studentPnl = await api('GET', '/api/merch/analytics', { token: member });
   check('7-day window is a subset of all time; bad period -> 400; students -> 403',
     week.status === 200 && week.body.totals.units_sold <= pnl.body.totals.units_sold && badPeriod.status === 400 && studentPnl.status === 403);
+
+  // ------------------------------------------------------------ client-side CSV + shortcut
+  section('Client-side CSV exports and the "/" search shortcut');
+  const app = fs.readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8');
+  const block = /\/\/ ---- csv:start([\s\S]*?)\/\/ ---- csv:end/.exec(app)?.[1] || '';
+  const box = {};
+  vm.createContext(box);
+  vm.runInContext(`${block}\nthis.api = { csvCell, toCsv };`, box);
+  const csv = box.api.toCsv(['code', 'name', 'note'], [['TKT-1', 'Rohan, Verma', 'said "hi"'], ['ORD-2', '=HYPERLINK("x")', '+91 98']]);
+  check('toCsv quotes commas and quotes, defuses formula-like cells, and ends rows with CRLF',
+    csv === 'code,name,note\r\nTKT-1,"Rohan, Verma","said ""hi"""\r\nORD-2,"\'=HYPERLINK(""x"")",\'+91 98\r\n', JSON.stringify(csv));
+  check('Export Attendee Roster / Export Orders buttons and the "/" shortcut are wired in app.js',
+    ['Export Attendee Roster (CSV)', 'Export Orders (CSV)', "exportRoster: () =>", "exportOrders: () =>", "event.key !== '/'", "'#main input[data-search]'"].every((t) => app.includes(t)));
 
   // ------------------------------------------------------------ full seed profile
   section('Full seed profile: 105 users and a semester of activity');

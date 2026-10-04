@@ -4,7 +4,7 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 - **Backend:** Node.js 22.5+ · Express 5 · SQLite (`better-sqlite3`, with an automatic fallback to Node's built-in `node:sqlite`)
 - **Frontend:** plain HTML, CSS and JavaScript in `public/`. No build step, no CDN, no web fonts, so it works with no internet connection. Full-screen sign-in with account recovery, a profile page, a collapsible sidebar that becomes a drawer on phones, light/dark themes, and a custom inline-SVG Skyline emblem.
-- **Proof:** 8 automated verification suites (255 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
+- **Proof:** 8 automated verification suites (257 checks) run against real server processes on both SQLite drivers, plus two live terminal demos for concurrency and index performance.
 
 ---
 
@@ -375,7 +375,7 @@ Admins manage roles from the **🛡️ Club Access & Role Management** table on 
 ### Verification and live proofs
 
 ```bash
-npm run verify:fast          # all 8 suites on better-sqlite3 (255 checks, ~25 s)
+npm run verify:fast          # all 8 suites on better-sqlite3 (257 checks, ~25 s)
 npm run verify               # the same suites on both SQLite drivers
 npm run proof:concurrency    # 3 multi-process races with per-process timings
 npm run proof:indexes        # B-tree SEARCH vs full SCAN on 25,000 synthetic rows
