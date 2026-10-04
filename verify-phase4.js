@@ -178,11 +178,11 @@ async function run() {
 
   const yesterday = localDate(Date.now() - DAY_MS);
   const created = await api('POST', '/api/tasks', {
-    token: tok('neha'),
+    token: tok('meera'),
     body: { title: 'Print price labels and allergen cards', assigned_to: users.rohan.id, due_date: yesterday },
   });
   const newTask = created.body?.task;
-  check(`Neha creates a task (default campaign "${CAMPAIGN}") -> 201 TODO with assignee name`,
+  check(`Treasurer Meera creates a task (default campaign "${CAMPAIGN}") -> 201 TODO with assignee name`,
     created.status === 201 && newTask.campaign_name === CAMPAIGN && newTask.status === 'TODO' &&
       newTask.assignee_name === 'Rohan Verma' && created.body.campaign.total_tasks === 6,
     `task #${newTask?.id} due ${newTask?.due_date}`);
@@ -190,15 +190,16 @@ async function run() {
     newTask.is_overdue === true && created.body.campaign.overdue_count === 1 && created.body.campaign.on_track === false);
 
   const badCreates = await Promise.all([
-    api('POST', '/api/tasks', { token: tok('neha'), body: { title: 'x', assigned_to: 'someone' } }),
-    api('POST', '/api/tasks', { token: tok('neha'), body: { title: '   ' } }),
-    api('POST', '/api/tasks', { token: tok('neha'), body: { title: 'x', due_date: '2026-02-30' } }),
+    api('POST', '/api/tasks', { token: tok('meera'), body: { title: 'x', assigned_to: 'someone' } }),
+    api('POST', '/api/tasks', { token: tok('meera'), body: { title: '   ' } }),
+    api('POST', '/api/tasks', { token: tok('meera'), body: { title: 'x', due_date: '2026-02-30' } }),
   ]);
-  const ghostAssignee = await api('POST', '/api/tasks', { token: tok('neha'), body: { title: 'x', assigned_to: 99999 } });
+  const ghostAssignee = await api('POST', '/api/tasks', { token: tok('meera'), body: { title: 'x', assigned_to: 99999 } });
   const studentCreate = await api('POST', '/api/tasks', { token: tok('kabir'), body: { title: 'x' } });
-  check('task validation: bad assignee/title/date -> 400, unknown assignee -> 404, student -> 403',
-    badCreates.every((r) => r.status === 400) && ghostAssignee.status === 404 && studentCreate.status === 403,
-    `statuses=${badCreates.map((r) => r.status).join(',')},${ghostAssignee.status},${studentCreate.status}`);
+  const volunteerCreate = await api('POST', '/api/tasks', { token: tok('neha'), body: { title: 'x' } });
+  check('task validation: bad assignee/title/date -> 400, unknown assignee -> 404, student and volunteer -> 403',
+    badCreates.every((r) => r.status === 400) && ghostAssignee.status === 404 && studentCreate.status === 403 && volunteerCreate.status === 403,
+    `statuses=${badCreates.map((r) => r.status).join(',')},${ghostAssignee.status},${studentCreate.status},${volunteerCreate.status}`);
 
   const kabirMove = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('kabir'), body: { status: 'DONE' } });
   check("unassigned student Kabir moving someone else's task -> 403", kabirMove.status === 403, `body=${JSON.stringify(kabirMove.body)}`);
@@ -209,9 +210,11 @@ async function run() {
   });
   check('assignee student trying to reassign -> 403', rohanReassign.status === 403);
 
-  const toProgress = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('neha'), body: { status: 'IN_PROGRESS' } });
-  const toDone = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('neha'), body: { status: 'DONE' } });
-  check('Neha moves it TODO -> IN_PROGRESS -> DONE (200 each) with live campaign stats',
+  const volunteerMove = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('neha'), body: { status: 'IN_PROGRESS' } });
+  check("a volunteer can't move a task that isn't assigned to them -> 403", volunteerMove.status === 403);
+  const toProgress = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('vikram'), body: { status: 'IN_PROGRESS' } });
+  const toDone = await api('PATCH', `/api/tasks/${newTask.id}/status`, { token: tok('vikram'), body: { status: 'DONE' } });
+  check('the Admin moves it TODO -> IN_PROGRESS -> DONE (200 each) with live campaign stats',
     toProgress.status === 200 && toProgress.body.task.status === 'IN_PROGRESS' &&
       toDone.status === 200 && toDone.body.task.status === 'DONE' &&
       toDone.body.campaign.done_count === 2 && toDone.body.campaign.completion_percentage === 33 &&

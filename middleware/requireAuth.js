@@ -25,9 +25,9 @@ function authenticate(req) {
 
   // The role is read live from the users row, not trusted from the token, so a
   // promotion or demotion by an admin takes effect on the very next request.
-  const current = db.prepare('SELECT role, email FROM users WHERE id = ?').get(sub);
+  const current = db.prepare('SELECT role, email, access_scope FROM users WHERE id = ?').get(sub);
   if (!current) return { reason: 'user no longer exists' };
-  return { user: { id: sub, role: current.role, email: current.email } };
+  return { user: { id: sub, role: current.role, email: current.email, access_scope: current.access_scope || 'ALL' } };
 }
 
 function requireAuth(req, res, next) {
@@ -59,4 +59,23 @@ function requireRole(...allowedRoles) {
   };
 }
 
-module.exports = { requireAuth, optionalAuth, requireRole };
+// Project boundaries for delegated admins and staff. A user scoped to one
+// module (e.g. BAKE_SALE_ONLY) can manage only that module; 'ALL' is unrestricted.
+const SCOPE_LABEL = {
+  ALL: 'Full Club Access',
+  EVENTS_ONLY: 'Events Project',
+  MERCH_ONLY: 'Merch Store',
+  BAKE_SALE_ONLY: 'Bake Sale Project',
+  FINANCE_ONLY: 'Finance & Books',
+};
+
+// Usage: router.post('/x', requireAuth, requireRole('ADMIN'), requireScope('MERCH'), handler)
+function requireScope(module) {
+  return function scopeGuard(req, res, next) {
+    const scope = req.user?.access_scope || 'ALL';
+    if (scope === 'ALL' || scope === `${module}_ONLY`) return next();
+    return res.status(403).json({ error: 'Forbidden', reason: `Your admin access is scoped strictly to: ${SCOPE_LABEL[scope] || scope}` });
+  };
+}
+
+module.exports = { requireAuth, optionalAuth, requireRole, requireScope, SCOPE_LABEL };

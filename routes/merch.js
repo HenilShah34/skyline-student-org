@@ -8,7 +8,7 @@ const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
 const { loadViewer } = require('../lib/viewer');
-const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
+const { requireAuth, optionalAuth, requireRole, requireScope, SCOPE_LABEL } = require('../middleware/requireAuth');
 
 const SIZES = ['S', 'M', 'L', 'XL'];
 const MAX_QUANTITY = 5;
@@ -16,6 +16,30 @@ const MAX_RESTOCK = 500; // units per restock call
 const FULFILLMENT_STATUSES = ['PAID_PENDING_PICKUP', 'PICKED_UP'];
 const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const ORDER_CODE_RE = /^[A-Z0-9-]{4,40}$/;
+const ADMIN_NO_PURCHASE = 'Admins manage events and inventory and do not purchase tickets or merch';
+const CATEGORIES = ['HOODIES', 'T_SHIRTS', 'CAPS', 'PANTS', 'ACCESSORIES'];
+// Each category is drawn by its own product artwork; four camera angles per item.
+const CATEGORY_STYLE = { HOODIES: 'hoodie', T_SHIRTS: 'tee', CAPS: 'cap', PANTS: 'pants', ACCESSORIES: 'tote' };
+const ANGLES = [
+  { view: 'front', label: 'Front View' },
+  { view: 'back', label: 'Back View' },
+  { view: 'side', label: 'Side Profile' },
+  { view: 'closeup', label: 'Fabric & Stitch Close-Up' },
+];
+const COLOR_RE = /^#[0-9a-f]{6}$/i;
+const PERIOD_DAYS = { '7d': 7, '30d': 30, '90d': 90, all: null };
+
+// images_json -> { style, color, angles[] } (older rows have none: derive from the category).
+function galleryOf(item) {
+  let stored = null;
+  try {
+    stored = item.images_json ? JSON.parse(item.images_json) : null;
+  } catch {
+    stored = null;
+  }
+  const style = stored?.style || CATEGORY_STYLE[item.category] || (/cap/i.test(item.name) ? 'cap' : /hoodie/i.test(item.name) ? 'hoodie' : 'tee');
+  return { style, color: stored?.color || '#1e2a4a', angles: ANGLES };
+}
 
 const router = express.Router();
 
@@ -78,6 +102,8 @@ router.get('/items', optionalAuth, (req, res) => {
       ORDER BY item_id, CASE size WHEN 'S' THEN 1 WHEN 'M' THEN 2 WHEN 'L' THEN 3 WHEN 'XL' THEN 4 END`)
     .all();
 
+  const managers = new Map(db.prepare('SELECT id, name FROM users WHERE id IN (SELECT assigned_manager_id FROM merch_items)').all().map((u) => [u.id, u.name]));
+  const seesCost = viewer.role === 'ADMIN' || viewer.role === 'TREASURER';
   const variantsByItem = new Map(items.map((item) => [item.id, []]));
   for (const v of variants) {
     variantsByItem.get(v.item_id).push({ variant_id: v.id, size: v.size, stock_count: v.stock_count });
@@ -99,6 +125,11 @@ router.get('/items', optionalAuth, (req, res) => {
         total_stock: itemVariants.reduce((sum, v) => sum + v.stock_count, 0),
         units_sold: item.units_sold,
         variants: itemVariants,
+        cost_price: seesCost ? item.cost_price : undefined,
+        low_stock_threshold: item.low_stock_threshold,
+        low_stock: itemVariants.filter((v) => v.stock_count <= item.low_stock_threshold).map((v) => ({ variant_id: v.variant_id, size: v.size, stock_count: v.stock_count })),
+        assigned_manager: item.assigned_manager_id ? { id: item.assigned_manager_id, name: managers.get(item.assigned_manager_id) || null } : null,
+        gallery: galleryOf(item),
       };
     }),
   });
@@ -140,6 +171,7 @@ function orderCodeTaken(code) {
 }
 
 router.post('/orders', requireAuth, (req, res) => {
+  if (req.user.role === 'ADMIN') throw new HttpError(403, 'Forbidden', { reason: ADMIN_NO_PURCHASE });
   const input = parseOrderInput(req.body || {});
 
   // BEGIN IMMEDIATE holds the write lock from the stock read to the decrement, so
@@ -259,7 +291,7 @@ router.get('/orders', requireAuth, (req, res) => {
   res.json({ filters: { status, q }, summary, count: orders.length, orders });
 });
 
-router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
+router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), requireScope('MERCH'), (req, res) => {
   const code = req.params.code.trim().toUpperCase();
   if (!ORDER_CODE_RE.test(code)) throw validationFailed({ code: 'Order code must be 4-40 letters, digits or dashes' });
 
@@ -290,7 +322,12 @@ router.patch('/orders/:code/pickup', requireAuth, requireRole('VOLUNTEER', 'TREA
 
 // Admin restock of one size. The increment happens in SQL (stock_count + ?)
 // inside the write lock, so it can't lose a sale that commits at the same time.
-router.patch('/variants/:id/restock', requireAuth, requireRole('ADMIN'), (req, res) => {
+router.patch('/variants/:id/restock', requireAuth, (req, res) => {
+  const isAdmin = req.user.role === 'ADMIN';
+  const scope = req.user.access_scope || 'ALL';
+  if (isAdmin && scope !== 'ALL' && scope !== 'MERCH_ONLY') {
+    throw new HttpError(403, 'Forbidden', { reason: `Your admin access is scoped strictly to: ${SCOPE_LABEL[scope] || scope}` });
+  }
   const id = parsePositiveInt(req.params.id);
   const add = parseInteger(req.body?.add_quantity);
 
@@ -301,6 +338,13 @@ router.patch('/variants/:id/restock', requireAuth, requireRole('ADMIN'), (req, r
 
   const { before, after, totalStock } = withTransaction(() => {
     const current = db.prepare(`${VARIANT_WITH_ITEM_SQL} WHERE v.id = ?`).get(id);
+    if (!isAdmin) {
+      // Only the Admin, or the inventory manager assigned to this item, may restock.
+      const managerId = current ? db.prepare('SELECT assigned_manager_id FROM merch_items WHERE id = ?').get(current.item_id).assigned_manager_id : null;
+      if (!current || managerId !== req.user.id) {
+        throw new HttpError(403, 'Forbidden', { reason: 'requires role: ADMIN' });
+      }
+    }
     if (!current) throw new HttpError(404, 'Variant not found');
     db.prepare('UPDATE merch_variants SET stock_count = stock_count + ? WHERE id = ?').run(add, id);
     return {
@@ -314,6 +358,123 @@ router.patch('/variants/:id/restock', requireAuth, requireRole('ADMIN'), (req, r
     variant: { id: after.id, size: after.size, stock_count: after.stock_count, previous_stock: before.stock_count, added: add },
     item: { id: after.item_id, name: after.item_name, total_stock: totalStock },
   });
+});
+
+function readItemInput(body, { partial = false } = {}) {
+  const has = (key) => !partial || body[key] !== undefined;
+  const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  const out = { sent: (key) => body[key] !== undefined };
+  const details = {};
+  out.name = text(body.name);
+  if (has('name') && (out.name.length < 3 || out.name.length > 80)) details.name = 'Name must be 3-80 characters';
+  out.description = body.description == null ? null : text(body.description) || null;
+  if (has('description') && out.description && out.description.length > 400) details.description = 'Description must be at most 400 characters';
+  out.category = text(body.category).toUpperCase();
+  if (has('category') && !CATEGORIES.includes(out.category)) details.category = `category must be one of ${CATEGORIES.join(', ')}`;
+  for (const [key, field, max] of [['costPrice', 'cost_price', 100000], ['memberPrice', 'member_price', 100000], ['regularPrice', 'regular_price', 100000], ['threshold', 'low_stock_threshold', 1000]]) {
+    out[key] = body[field] === undefined && field === 'low_stock_threshold' && !partial ? 5 : parseInteger(body[field]);
+    if (has(field) && (out[key] === null || out[key] < 0 || out[key] > max)) details[field] = `${field} must be a whole number from 0 to ${max}`;
+  }
+  if (!partial && out.memberPrice !== null && out.regularPrice !== null && out.memberPrice > out.regularPrice) {
+    details.member_price = 'member_price cannot be higher than regular_price';
+  }
+  out.managerId = body.assigned_manager_id == null || body.assigned_manager_id === '' ? null : parseInteger(body.assigned_manager_id);
+  if (body.assigned_manager_id != null && body.assigned_manager_id !== '' && !(out.managerId > 0)) details.assigned_manager_id = 'assigned_manager_id must be a user id';
+  out.color = body.color === undefined ? '#1e2a4a' : text(body.color);
+  if (body.color !== undefined && !COLOR_RE.test(out.color)) details.color = 'color must be a hex colour like #1e2a4a';
+  if (!partial) {
+    out.stock = {};
+    for (const size of SIZES) {
+      const n = body.stock?.[size] === undefined ? 0 : parseInteger(body.stock[size]);
+      if (n === null || n < 0 || n > 10000) details[`stock_${size}`] = `stock.${size} must be a whole number from 0 to 10000`;
+      out.stock[size] = n;
+    }
+  }
+  if (Object.keys(details).length) throw validationFailed(details);
+  return out;
+}
+
+function assertManager(id) {
+  if (id !== null && !db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) throw new HttpError(404, `User ${id} not found`);
+}
+
+// Add a product with its four sizes in one transaction.
+router.post('/items', requireAuth, requireRole('ADMIN'), requireScope('MERCH'), (req, res) => {
+  const input = readItemInput(req.body || {});
+  const itemId = withTransaction(() => {
+    assertManager(input.managerId);
+    const gallery = JSON.stringify({ style: CATEGORY_STYLE[input.category], color: input.color });
+    const { lastInsertRowid } = db
+      .prepare(`
+        INSERT INTO merch_items (name, description, category, member_price, regular_price, created_at, cost_price, low_stock_threshold, assigned_manager_id, images_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.name, input.description, input.category, input.memberPrice, input.regularPrice, new Date().toISOString(),
+        input.costPrice, input.threshold, input.managerId, gallery);
+    const insertVariant = db.prepare('INSERT INTO merch_variants (item_id, size, stock_count) VALUES (?, ?, ?)');
+    for (const size of SIZES) insertVariant.run(lastInsertRowid, size, input.stock[size]);
+    return Number(lastInsertRowid);
+  });
+  res.status(201).json({ item: db.prepare('SELECT * FROM merch_items WHERE id = ?').get(itemId), variants: db.prepare('SELECT * FROM merch_variants WHERE item_id = ?').all(itemId) });
+});
+
+// Edit a product's details (stock changes go through restock).
+router.patch('/items/:id', requireAuth, requireRole('ADMIN'), requireScope('MERCH'), (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) throw validationFailed({ id: 'Item id must be a positive integer' });
+  const input = readItemInput(req.body || {}, { partial: true });
+  const item = withTransaction(() => {
+    const current = db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
+    if (!current) throw new HttpError(404, 'Item not found');
+    if (input.sent('assigned_manager_id')) assertManager(input.managerId);
+    const pick = (field, key) => (input.sent(field) ? input[key] : current[field]);
+    const memberPrice = pick('member_price', 'memberPrice');
+    const regularPrice = pick('regular_price', 'regularPrice');
+    if (memberPrice > regularPrice) throw validationFailed({ member_price: 'member_price cannot be higher than regular_price' });
+    const category = pick('category', 'category');
+    const gallery = input.sent('color') || input.sent('category')
+      ? JSON.stringify({ style: CATEGORY_STYLE[category] || galleryOf(current).style, color: input.sent('color') ? input.color : galleryOf(current).color })
+      : current.images_json;
+    db.prepare(`
+      UPDATE merch_items SET name = ?, description = ?, category = ?, cost_price = ?, member_price = ?, regular_price = ?,
+                             low_stock_threshold = ?, assigned_manager_id = ?, images_json = ?
+      WHERE id = ?`)
+      .run(pick('name', 'name'), pick('description', 'description'), category, pick('cost_price', 'costPrice'), memberPrice, regularPrice,
+        pick('low_stock_threshold', 'threshold'), input.sent('assigned_manager_id') ? input.managerId : current.assigned_manager_id, gallery, id);
+    return db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
+  });
+  res.json({ item });
+});
+
+// Profit & loss per product for a period, ranked by units sold.
+// Cost = the item's current cost_price × units sold in the period.
+router.get('/analytics', requireAuth, requireRole('ADMIN', 'TREASURER'), (req, res) => {
+  const period = typeof req.query.period === 'string' ? req.query.period : 'all';
+  if (!(period in PERIOD_DAYS)) throw validationFailed({ period: 'period must be one of 7d, 30d, 90d, all' });
+  const days = PERIOD_DAYS[period];
+  const since = days === null ? null : new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const rows = db
+    .prepare(`
+      SELECT i.id, i.name, i.category, i.cost_price, i.member_price, i.regular_price,
+             COALESCE(SUM(o.quantity), 0) AS units_sold,
+             COALESCE(SUM(o.total_paid), 0) AS revenue,
+             COUNT(o.id) AS orders
+      FROM merch_items i
+      LEFT JOIN merch_variants v ON v.item_id = i.id
+      LEFT JOIN merch_orders o ON o.variant_id = v.id AND (? IS NULL OR o.created_at >= ?)
+      GROUP BY i.id
+      ORDER BY units_sold DESC, revenue DESC, i.id`)
+    .all(since, since);
+  const margin = (profit, revenue) => (revenue ? Math.round((profit / revenue) * 1000) / 10 : 0);
+  const products = rows.map((r, i) => {
+    const cost = r.cost_price * r.units_sold;
+    return { rank: i + 1, ...r, cost, profit: r.revenue - cost, margin_pct: margin(r.revenue - cost, r.revenue) };
+  });
+  const totals = products.reduce((t, p) => ({
+    units_sold: t.units_sold + p.units_sold, revenue: t.revenue + p.revenue, cost: t.cost + p.cost, orders: t.orders + p.orders,
+  }), { units_sold: 0, revenue: 0, cost: 0, orders: 0 });
+  totals.profit = totals.revenue - totals.cost;
+  totals.margin_pct = margin(totals.profit, totals.revenue);
+  res.json({ period, since, totals, products });
 });
 
 module.exports = router;

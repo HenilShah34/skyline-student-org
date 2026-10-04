@@ -4,9 +4,43 @@ const express = require('express');
 const { db, withTransaction } = require('../db');
 const { HttpError, validationFailed, parsePositiveInt, parseInteger, parseEnumParam } = require('../lib/http');
 const { DEFAULT_CAMPAIGN, TASK_STATUSES, localDate, campaignSummaries } = require('../lib/fundraising');
-const { requireAuth, requireRole } = require('../middleware/requireAuth');
+const { requireAuth, requireRole, requireScope, SCOPE_LABEL } = require('../middleware/requireAuth');
+const { membershipSnapshot } = require('../lib/users');
 
-const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
+// Task managers create, edit, assign and delete tasks. Volunteers and students don't.
+const MANAGER_ROLES = new Set(['TREASURER', 'ADMIN']);
+const REQUEST_DECISIONS = ['APPROVE', 'REJECT'];
+const MAX_NOTE = 200;
+
+function inBakeSaleScope(user) {
+  const scope = user.access_scope || 'ALL';
+  return scope === 'ALL' || scope === 'BAKE_SALE_ONLY';
+}
+
+function scopeError(user) {
+  return new HttpError(403, 'Forbidden', { reason: `Your admin access is scoped strictly to: ${SCOPE_LABEL[user.access_scope] || user.access_scope}` });
+}
+
+const REQUEST_SQL = `
+  SELECT r.id, r.task_id, r.user_id, r.note, r.status, r.created_at,
+         t.title AS task_title, t.status AS task_status, t.assigned_to AS task_assigned_to,
+         u.name AS user_name, u.role AS user_role, u.membership_code, u.membership_status, u.membership_expires_at
+  FROM task_requests r
+  JOIN fundraiser_tasks t ON t.id = r.task_id
+  JOIN users u ON u.id = r.user_id`;
+
+function toRequestView(row) {
+  return {
+    id: row.id,
+    task_id: row.task_id,
+    task_title: row.task_title,
+    task_status: row.task_status,
+    note: row.note,
+    status: row.status,
+    created_at: row.created_at,
+    user: { id: row.user_id, name: row.user_name, role: row.user_role, membership_status: membershipSnapshot(row).status },
+  };
+}
 const MAX_CAMPAIGN = 80;
 const MAX_TITLE = 150;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -91,11 +125,18 @@ router.get('/', requireAuth, (req, res) => {
     .all(...params)
     .map((row) => toTaskView(row, today));
 
+  const isManager = MANAGER_ROLES.has(req.user.role);
+  const requests = (isManager
+    ? db.prepare(`${REQUEST_SQL} WHERE r.status = 'PENDING' ORDER BY r.created_at ASC, r.id ASC`).all()
+    : db.prepare(`${REQUEST_SQL} WHERE r.user_id = ? ORDER BY r.created_at DESC`).all(req.user.id)
+  ).map(toRequestView);
+
   res.json({
     filters: { campaign, status, assigned_to: assignedTo },
     count: tasks.length,
     tasks,
     campaigns_summary: campaignSummaries(campaign),
+    requests,
   });
 });
 
@@ -109,7 +150,7 @@ router.get('/assignees', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADM
   res.json({ users });
 });
 
-router.post('/', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
+router.post('/', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('BAKE_SALE'), (req, res) => {
   const body = req.body || {};
   const campaign = body.campaign_name === undefined
     ? DEFAULT_CAMPAIGN
@@ -157,17 +198,21 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   if (assignee?.error) details.assigned_to = assignee.error;
   if (Object.keys(details).length) throw validationFailed(details);
 
-  const isStaff = STAFF_ROLES.has(req.user.role);
-  if (reassign && !isStaff) {
-    throw new HttpError(403, 'Forbidden', { reason: 'only volunteers, the Treasurer and the Admin can reassign tasks' });
+  const isManager = MANAGER_ROLES.has(req.user.role);
+  if (reassign && !isManager) {
+    throw new HttpError(403, 'Forbidden', { reason: 'only the Admin or the Treasurer can reassign tasks' });
   }
+  if (reassign && !inBakeSaleScope(req.user)) throw scopeError(req.user);
 
   const task = withTransaction(() => {
     const current = db.prepare('SELECT id, status, assigned_to FROM fundraiser_tasks WHERE id = ?').get(id);
     if (!current) throw new HttpError(404, 'Task not found');
-    if (!isStaff && current.assigned_to !== req.user.id) {
-      throw new HttpError(403, 'Forbidden', { reason: 'students can only update tasks assigned to them' });
+    // Only the person the task is assigned to, or the Admin, may move it.
+    const isAssignee = current.assigned_to === req.user.id;
+    if (hasStatus && !isAssignee && req.user.role !== 'ADMIN') {
+      throw new HttpError(403, 'Forbidden', { reason: 'only the assigned person or the Admin can update this task' });
     }
+    if (hasStatus && !isAssignee && !inBakeSaleScope(req.user)) throw scopeError(req.user);
 
     const nextStatus = hasStatus ? status : current.status;
     const effectiveAssignee = reassign ? assignee.value : current.assigned_to;
@@ -187,7 +232,7 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   res.json({ task: toTaskView(task), campaign: campaignSummaries(task.campaign_name)[task.campaign_name] });
 });
 
-router.delete('/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+router.delete('/:id', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('BAKE_SALE'), (req, res) => {
   const id = parsePositiveInt(req.params.id);
   if (!id) throw validationFailed({ id: 'Task id must be a positive integer' });
 
@@ -199,6 +244,91 @@ router.delete('/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
   });
 
   res.json({ deleted, campaigns_summary: campaignSummaries() });
+});
+
+// Edit a task's title, due date or campaign (managers only).
+router.patch('/:id', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('BAKE_SALE'), (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) throw validationFailed({ id: 'Task id must be a positive integer' });
+  const body = req.body || {};
+  const details = {};
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const campaign = typeof body.campaign_name === 'string' ? body.campaign_name.trim() : '';
+  const dueDate = parseDueDate(body.due_date);
+  if (body.title !== undefined && (!title || title.length > MAX_TITLE)) details.title = `Title must be 1-${MAX_TITLE} characters`;
+  if (body.campaign_name !== undefined && (!campaign || campaign.length > MAX_CAMPAIGN)) details.campaign_name = `campaign_name must be 1-${MAX_CAMPAIGN} characters`;
+  if (body.due_date !== undefined && dueDate.error) details.due_date = dueDate.error;
+  if (![body.title, body.campaign_name, body.due_date].some((v) => v !== undefined)) details.task = 'Send a title, campaign_name and/or due_date';
+  if (Object.keys(details).length) throw validationFailed(details);
+
+  const task = withTransaction(() => {
+    const current = db.prepare('SELECT * FROM fundraiser_tasks WHERE id = ?').get(id);
+    if (!current) throw new HttpError(404, 'Task not found');
+    db.prepare('UPDATE fundraiser_tasks SET title = ?, campaign_name = ?, due_date = ? WHERE id = ?').run(
+      body.title !== undefined ? title : current.title,
+      body.campaign_name !== undefined ? campaign : current.campaign_name,
+      body.due_date !== undefined ? dueDate.value : current.due_date,
+      id,
+    );
+    return db.prepare(`${TASK_SQL} WHERE t.id = ?`).get(id);
+  });
+  res.json({ task: toTaskView(task), campaign: campaignSummaries(task.campaign_name)[task.campaign_name] });
+});
+
+// Club members and volunteers ask to take a task; an admin approves one.
+router.post('/:id/request', requireAuth, (req, res) => {
+  const id = parsePositiveInt(req.params.id);
+  if (!id) throw validationFailed({ id: 'Task id must be a positive integer' });
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+  if (note.length > MAX_NOTE) throw validationFailed({ note: `note must be at most ${MAX_NOTE} characters` });
+
+  const request = withTransaction(() => {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const isMember = user && user.role === 'STUDENT' && membershipSnapshot(user).status === 'ACTIVE';
+    if (!user || !(isMember || user.role === 'VOLUNTEER' || user.role === 'TREASURER')) {
+      throw new HttpError(403, 'Forbidden', { reason: 'only club members and volunteers can request tasks' });
+    }
+    const task = db.prepare('SELECT * FROM fundraiser_tasks WHERE id = ?').get(id);
+    if (!task) throw new HttpError(404, 'Task not found');
+    if (task.status === 'DONE') throw new HttpError(409, 'This task is already done');
+    if (task.assigned_to === user.id) throw new HttpError(409, 'This task is already assigned to you');
+    const existing = db.prepare('SELECT id, status FROM task_requests WHERE task_id = ? AND user_id = ?').get(id, user.id);
+    if (existing) throw new HttpError(409, `You already requested this task (${existing.status.toLowerCase()})`, { request_id: existing.id });
+    const { lastInsertRowid } = db
+      .prepare("INSERT INTO task_requests (task_id, user_id, note, status, created_at) VALUES (?, ?, ?, 'PENDING', ?)")
+      .run(id, user.id, note || null, new Date().toISOString());
+    return db.prepare(`${REQUEST_SQL} WHERE r.id = ?`).get(lastInsertRowid);
+  });
+  res.status(201).json({ request: toRequestView(request) });
+});
+
+// Approve (assigns the task and closes the other pending requests) or reject.
+router.patch('/requests/:requestId/review', requireAuth, requireRole('ADMIN'), requireScope('BAKE_SALE'), (req, res) => {
+  const requestId = parsePositiveInt(req.params.requestId);
+  const decision = typeof req.body?.decision === 'string' ? req.body.decision.trim().toUpperCase() : '';
+  const details = {};
+  if (!requestId) details.requestId = 'Request id must be a positive integer';
+  if (!REQUEST_DECISIONS.includes(decision)) details.decision = `decision must be one of ${REQUEST_DECISIONS.join(', ')}`;
+  if (Object.keys(details).length) throw validationFailed(details);
+
+  const result = withTransaction(() => {
+    const request = db.prepare('SELECT * FROM task_requests WHERE id = ?').get(requestId);
+    if (!request) throw new HttpError(404, 'Request not found');
+    if (request.status !== 'PENDING') throw new HttpError(409, `Request already ${request.status}`);
+    if (decision === 'REJECT') {
+      db.prepare("UPDATE task_requests SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING'").run(requestId);
+      return { closed: 0 };
+    }
+    db.prepare("UPDATE task_requests SET status = 'APPROVED' WHERE id = ? AND status = 'PENDING'").run(requestId);
+    db.prepare('UPDATE fundraiser_tasks SET assigned_to = ? WHERE id = ?').run(request.user_id, request.task_id);
+    const closed = db
+      .prepare("UPDATE task_requests SET status = 'REJECTED' WHERE task_id = ? AND id != ? AND status = 'PENDING'")
+      .run(request.task_id, requestId).changes;
+    return { closed };
+  });
+  const request = toRequestView(db.prepare(`${REQUEST_SQL} WHERE r.id = ?`).get(requestId));
+  const task = toTaskView(db.prepare(`${TASK_SQL} WHERE t.id = ?`).get(request.task_id));
+  res.json({ request, task, other_requests_rejected: result.closed });
 });
 
 module.exports = router;

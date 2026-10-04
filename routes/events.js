@@ -8,12 +8,13 @@ const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
 const { membershipSnapshot } = require('../lib/users');
 const { loadViewer } = require('../lib/viewer');
-const { requireAuth, optionalAuth, requireRole } = require('../middleware/requireAuth');
+const { requireAuth, optionalAuth, requireRole, requireScope } = require('../middleware/requireAuth');
 
 const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const MAX_SEATS = 100000;
 const MAX_PRICE = 1000000;
 const TICKET_CODE_RE = /^[A-Z0-9-]{4,40}$/;
+const ADMIN_NO_PURCHASE = 'Admins manage events and inventory and do not purchase tickets or merch';
 
 const router = express.Router();
 
@@ -57,7 +58,9 @@ function parseEventId(value) {
   return id;
 }
 
-function validateEventInput(body) {
+// partial: true (PATCH) checks only the fields that were sent.
+function validateEventInput(body, { partial = false } = {}) {
+  const has = (key) => !partial || body[key] !== undefined;
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const location = typeof body.location === 'string' ? body.location.trim() : '';
   const description = body.description == null ? null : typeof body.description === 'string' ? body.description.trim() || null : undefined;
@@ -67,24 +70,36 @@ function validateEventInput(body) {
   const guestPrice = parseInteger(body.guest_price);
 
   const details = {};
-  if (title.length < 3 || title.length > 120) details.title = 'Title must be 3-120 characters';
-  if (description === undefined || (description && description.length > 2000)) {
+  if (has('title') && (title.length < 3 || title.length > 120)) details.title = 'Title must be 3-120 characters';
+  if (has('description') && (description === undefined || (description && description.length > 2000))) {
     details.description = 'Description must be text of at most 2000 characters';
   }
-  if (!Number.isFinite(eventMs)) details.event_date = 'event_date must be a valid ISO 8601 date/time';
-  if (location.length < 2 || location.length > 120) details.location = 'Location must be 2-120 characters';
-  if (totalSeats === null || totalSeats < 1 || totalSeats > MAX_SEATS) {
+  if (has('event_date') && !Number.isFinite(eventMs)) details.event_date = 'event_date must be a valid ISO 8601 date/time';
+  if (has('location') && (location.length < 2 || location.length > 120)) details.location = 'Location must be 2-120 characters';
+  if (has('total_seats') && (totalSeats === null || totalSeats < 1 || totalSeats > MAX_SEATS)) {
     details.total_seats = `total_seats must be an integer from 1 to ${MAX_SEATS}`;
   }
-  if (memberPrice === null || memberPrice < 0 || memberPrice > MAX_PRICE) {
+  if (has('member_price') && (memberPrice === null || memberPrice < 0 || memberPrice > MAX_PRICE)) {
     details.member_price = 'member_price must be a non-negative integer (₹)';
   }
-  if (guestPrice === null || guestPrice < 0 || guestPrice > MAX_PRICE) {
+  if (has('guest_price') && (guestPrice === null || guestPrice < 0 || guestPrice > MAX_PRICE)) {
     details.guest_price = 'guest_price must be a non-negative integer (₹)';
   }
   if (Object.keys(details).length) throw validationFailed(details);
 
-  return { title, description, eventDate: new Date(eventMs).toISOString(), location, totalSeats, memberPrice, guestPrice };
+  if (partial && !['title', 'description', 'event_date', 'location', 'total_seats', 'member_price', 'guest_price'].some((k) => body[k] !== undefined)) {
+    throw validationFailed({ event: 'Send at least one field to change' });
+  }
+  return {
+    title,
+    description,
+    eventDate: Number.isFinite(eventMs) ? new Date(eventMs).toISOString() : null,
+    location,
+    totalSeats,
+    memberPrice,
+    guestPrice,
+    sent: (key) => body[key] !== undefined,
+  };
 }
 
 // Ticket stats come from one grouped pass over tickets joined back to events,
@@ -137,7 +152,7 @@ router.get('/events', optionalAuth, (req, res) => {
   });
 });
 
-router.post('/events', requireAuth, requireRole('ADMIN'), (req, res) => {
+router.post('/events', requireAuth, requireRole('ADMIN'), requireScope('EVENTS'), (req, res) => {
   const input = validateEventInput(req.body || {});
   const { lastInsertRowid } = db
     .prepare(`
@@ -149,12 +164,48 @@ router.post('/events', requireAuth, requireRole('ADMIN'), (req, res) => {
   res.status(201).json({ event: toEventView(event) });
 });
 
+// Edit an event. Seats already sold stay sold: changing total_seats moves
+// seats_left by the same amount, and the new total can't go below seats sold,
+// so seats_left never drops below 0.
+router.patch('/events/:id', requireAuth, requireRole('ADMIN'), requireScope('EVENTS'), (req, res) => {
+  const eventId = parseEventId(req.params.id);
+  const input = validateEventInput(req.body || {}, { partial: true });
+
+  const event = withTransaction(() => {
+    const current = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!current) throw new HttpError(404, 'Event not found');
+    const sold = current.total_seats - current.seats_left;
+    const totalSeats = input.sent('total_seats') ? input.totalSeats : current.total_seats;
+    if (totalSeats < sold) {
+      throw validationFailed({ total_seats: `total_seats can't go below the ${sold} seats already sold` });
+    }
+    db.prepare(`
+      UPDATE events SET title = ?, description = ?, event_date = ?, location = ?, total_seats = ?, seats_left = ?,
+                        member_price = ?, guest_price = ?
+      WHERE id = ?`)
+      .run(
+        input.sent('title') ? input.title : current.title,
+        input.sent('description') ? input.description : current.description,
+        input.sent('event_date') ? input.eventDate : current.event_date,
+        input.sent('location') ? input.location : current.location,
+        totalSeats,
+        totalSeats - sold,
+        input.sent('member_price') ? input.memberPrice : current.member_price,
+        input.sent('guest_price') ? input.guestPrice : current.guest_price,
+        eventId,
+      );
+    return db.prepare(`${EVENTS_WITH_STATS_SQL} WHERE e.id = ?`).get(eventId);
+  });
+  res.json({ event: toEventView(event) });
+});
+
 function ticketCodeTaken(code) {
   return Boolean(db.prepare('SELECT 1 FROM tickets WHERE ticket_code = ?').get(code));
 }
 
 router.post('/events/:id/tickets', requireAuth, (req, res) => {
   const eventId = parseEventId(req.params.id);
+  if (req.user.role === 'ADMIN') throw new HttpError(403, 'Forbidden', { reason: ADMIN_NO_PURCHASE });
 
   // BEGIN IMMEDIATE holds the write lock from the first read, so the duplicate
   // and capacity checks below cannot go stale before the writes land.
@@ -287,7 +338,7 @@ router.get('/events/:id/tickets', requireAuth, (req, res) => {
   });
 });
 
-router.post('/tickets/:code/check-in', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), (req, res) => {
+router.post('/tickets/:code/check-in', requireAuth, requireRole('VOLUNTEER', 'TREASURER', 'ADMIN'), requireScope('EVENTS'), (req, res) => {
   const code = req.params.code.trim().toUpperCase();
   if (!TICKET_CODE_RE.test(code)) throw validationFailed({ code: 'Ticket code must be 4-40 letters, digits or dashes' });
 

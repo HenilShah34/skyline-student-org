@@ -1,5 +1,9 @@
 'use strict';
 
+// Test servers seed the compact profile (the 5 named demo accounts), so every
+// suite's exact counts stay stable. verify-phase8.js checks the full profile.
+process.env.SEED_PROFILE = process.env.SEED_PROFILE || 'compact';
+
 // Shared harness for verify-phase*.js: result reporting, throwaway databases and
 // real `node server.js` child processes on ephemeral ports (never port 3000).
 

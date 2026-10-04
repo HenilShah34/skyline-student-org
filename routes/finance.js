@@ -5,7 +5,7 @@ const { db, withTransaction } = require('../db');
 const { HttpError, validationFailed, parsePositiveInt, parseInteger, parseEnumParam } = require('../lib/http');
 const { recordTransaction } = require('../lib/ledger');
 const { holdForRaceTest } = require('../lib/testHooks');
-const { requireAuth, requireRole } = require('../middleware/requireAuth');
+const { requireAuth, requireRole, requireScope } = require('../middleware/requireAuth');
 
 const STAFF_ROLES = new Set(['VOLUNTEER', 'TREASURER', 'ADMIN']);
 const EXPENSE_CATEGORIES = ['FUNDRAISER_SUPPLIES', 'EVENT_COSTS', 'OPERATIONS', 'MARKETING'];
@@ -134,7 +134,7 @@ router.post('/reimbursements', requireAuth, requireRole('VOLUNTEER', 'TREASURER'
   res.status(201).json({ reimbursement });
 });
 
-router.patch('/reimbursements/:id/review', requireAuth, requireRole('TREASURER', 'ADMIN'), (req, res) => {
+router.patch('/reimbursements/:id/review', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('FINANCE'), (req, res) => {
   const id = parsePositiveInt(req.params.id);
   if (!id) throw validationFailed({ id: 'Reimbursement id must be a positive integer' });
   const decision = typeof req.body?.decision === 'string' ? req.body.decision.trim().toUpperCase() : '';
@@ -313,7 +313,7 @@ router.get('/ledger', requireAuth, (req, res) => {
   });
 });
 
-router.post('/fundraiser-income', requireAuth, requireRole('TREASURER', 'ADMIN'), (req, res) => {
+router.post('/fundraiser-income', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('FINANCE'), (req, res) => {
   const body = req.body || {};
   const amount = readAmount(body.amount);
   const description = readText(body.description, MAX_DESCRIPTION);
@@ -366,7 +366,7 @@ function csvRow(values) {
 
 // The whole book, oldest first, plus TOTAL_IN / TOTAL_OUT / NET_BALANCE rows
 // that use the same 8 columns (label in "id", amount in "signed_amount").
-router.get('/ledger/export.csv', requireAuth, requireRole('TREASURER', 'ADMIN'), (req, res) => {
+router.get('/ledger/export.csv', requireAuth, requireRole('TREASURER', 'ADMIN'), requireScope('FINANCE'), (req, res) => {
   const rows = db
     .prepare(`
       SELECT l.id, l.created_at, l.type, l.category,

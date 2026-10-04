@@ -110,8 +110,8 @@ async function run() {
       p.all_queries_use_index === true,
     p.query_plans.map((q) => q.plan).join(' | '));
   const liveCounts = Object.fromEntries(Object.keys(p.table_counts).map((t) => [t, db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n]));
-  check('table_counts covers all 10 tables and matches the database',
-    Object.keys(p.table_counts).length === 10 && Object.entries(p.table_counts).every(([t, n]) => liveCounts[t] === n));
+  check(`table_counts covers all ${require('./db').TABLES.length} tables and matches the database`,
+    Object.keys(p.table_counts).length === require('./db').TABLES.length && Object.entries(p.table_counts).every(([t, n]) => liveCounts[t] === n));
   check('ledger_integrity: total_in - total_out === net_balance',
     p.ledger_integrity.balanced === true && p.ledger_integrity.total_in - p.ledger_integrity.total_out === p.ledger_integrity.net_balance &&
       p.ledger_integrity.total_in === raw.total_in);
@@ -309,7 +309,7 @@ async function run() {
   // ------------------------------------------------------------ Task workflow
   section('Bake-sale tasks: moves in every direction, unassigned guard, admin delete');
   const users = Object.fromEntries(db.prepare('SELECT id, email FROM users').all().map((u) => [u.email.split('@')[0], u.id]));
-  const move = (id, body, token = volunteer) => api('PATCH', `/api/tasks/${id}/status`, { token, body });
+  const move = (id, body, token = admin) => api('PATCH', `/api/tasks/${id}/status`, { token, body });
   const openTask = db.prepare("SELECT id FROM fundraiser_tasks WHERE assigned_to IS NULL AND status = 'TODO' ORDER BY id LIMIT 1").get();
   const startUnassigned = await move(openTask.id, { status: 'IN_PROGRESS' });
   const finishUnassigned = await move(openTask.id, { status: 'DONE' });
@@ -343,8 +343,8 @@ async function run() {
 
   const doomed = db.prepare('SELECT id, campaign_name FROM fundraiser_tasks ORDER BY id DESC LIMIT 1').get();
   const tasksBefore = db.prepare('SELECT COUNT(*) AS n FROM fundraiser_tasks WHERE campaign_name = ?').get(doomed.campaign_name).n;
-  const nonAdminDeletes = await Promise.all([volunteer, treasurer, student].map((token) => api('DELETE', `/api/tasks/${doomed.id}`, { token })));
-  check('DELETE /api/tasks/:id by volunteer, treasurer or student -> 403; the task is untouched',
+  const nonAdminDeletes = await Promise.all([volunteer, student].map((token) => api('DELETE', `/api/tasks/${doomed.id}`, { token })));
+  check('DELETE /api/tasks/:id by a volunteer or student -> 403; the task is untouched',
     nonAdminDeletes.every((r) => r.status === 403) && db.prepare('SELECT 1 FROM fundraiser_tasks WHERE id = ?').get(doomed.id) !== undefined,
     nonAdminDeletes.map((r) => r.status).join(','));
   const removed = await api('DELETE', `/api/tasks/${doomed.id}`, { token: admin });

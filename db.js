@@ -17,6 +17,7 @@ const TABLES = [
   'merch_variants',
   'merch_orders',
   'fundraiser_tasks',
+  'task_requests',
   'expense_reimbursements',
   'ledger_transactions',
 ];
@@ -31,7 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
   membership_code       TEXT UNIQUE,
   membership_status     TEXT NOT NULL DEFAULT 'NONE' CHECK (membership_status IN ('NONE', 'ACTIVE', 'EXPIRED')),
   membership_expires_at TEXT,
-  created_at            TEXT NOT NULL
+  created_at            TEXT NOT NULL,
+  access_scope          TEXT NOT NULL DEFAULT 'ALL' CHECK (access_scope IN ('ALL', 'EVENTS_ONLY', 'MERCH_ONLY', 'BAKE_SALE_ONLY', 'FINANCE_ONLY'))
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -75,7 +77,11 @@ CREATE TABLE IF NOT EXISTS merch_items (
   category      TEXT NOT NULL,
   member_price  INTEGER NOT NULL,
   regular_price INTEGER NOT NULL,
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  cost_price          INTEGER NOT NULL DEFAULT 300 CHECK (cost_price >= 0),
+  low_stock_threshold INTEGER NOT NULL DEFAULT 5 CHECK (low_stock_threshold >= 0),
+  assigned_manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  images_json         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS merch_variants (
@@ -107,6 +113,18 @@ CREATE TABLE IF NOT EXISTS fundraiser_tasks (
   status        TEXT NOT NULL DEFAULT 'TODO' CHECK (status IN ('TODO', 'IN_PROGRESS', 'DONE')),
   due_date      TEXT,
   created_at    TEXT NOT NULL
+);
+
+-- A member or volunteer asks to take a task; an admin approves one request,
+-- which assigns the task and closes the other pending requests for it.
+CREATE TABLE IF NOT EXISTS task_requests (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL REFERENCES fundraiser_tasks(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note       TEXT,
+  status     TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  created_at TEXT NOT NULL,
+  UNIQUE (task_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS expense_reimbursements (
@@ -287,6 +305,11 @@ function runSavepoint(fn, conn, depth) {
 const ADDED_COLUMNS = [
   { table: 'merch_orders', column: 'picked_up_at', definition: 'TEXT' },
   { table: 'merch_orders', column: 'picked_up_by', definition: 'INTEGER REFERENCES users(id) ON DELETE SET NULL' },
+  { table: 'users', column: 'access_scope', definition: "TEXT NOT NULL DEFAULT 'ALL' CHECK (access_scope IN ('ALL', 'EVENTS_ONLY', 'MERCH_ONLY', 'BAKE_SALE_ONLY', 'FINANCE_ONLY'))" },
+  { table: 'merch_items', column: 'cost_price', definition: 'INTEGER NOT NULL DEFAULT 300 CHECK (cost_price >= 0)' },
+  { table: 'merch_items', column: 'low_stock_threshold', definition: 'INTEGER NOT NULL DEFAULT 5 CHECK (low_stock_threshold >= 0)' },
+  { table: 'merch_items', column: 'assigned_manager_id', definition: 'INTEGER REFERENCES users(id) ON DELETE SET NULL' },
+  { table: 'merch_items', column: 'images_json', definition: 'TEXT' },
 ];
 
 function addMissingColumns(conn) {

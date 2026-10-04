@@ -153,8 +153,8 @@ function insertSeedData(passwordHashes) {
 
   // Merch catalogue. Stock counts are what remains after the seeded orders.
   const insertItem = db.prepare(`
-    INSERT INTO merch_items (name, description, category, member_price, regular_price, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)`);
+    INSERT INTO merch_items (name, description, category, member_price, regular_price, created_at, cost_price, low_stock_threshold, assigned_manager_id, images_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertVariant = db.prepare('INSERT INTO merch_variants (item_id, size, stock_count) VALUES (?, ?, ?)');
   const insertOrder = db.prepare(`
     INSERT INTO merch_orders (order_code, user_id, variant_id, quantity, total_paid, fulfillment_status, created_at, picked_up_at, picked_up_by)
@@ -168,6 +168,7 @@ function insertSeedData(passwordHashes) {
       memberPrice: 899,
       regularPrice: 1199,
       stock: { S: 12, M: 24, L: 18, XL: 3 },
+      category: 'HOODIES', costPrice: 520, style: 'hoodie', color: '#1e2a4a',
     },
     {
       key: 'tee',
@@ -176,11 +177,42 @@ function insertSeedData(passwordHashes) {
       memberPrice: 349,
       regularPrice: 499,
       stock: { S: 30, M: 40, L: 20, XL: 0 },
+      category: 'T_SHIRTS', costPrice: 180, style: 'tee', color: '#0f766e',
+    },
+    {
+      key: 'cap',
+      name: 'Skyline Embroidered Snapback Cap',
+      description: 'Structured six-panel snapback with a raised 3D-embroidered Skyline emblem and a curved-brim option.',
+      memberPrice: 399,
+      regularPrice: 549,
+      stock: { S: 6, M: 14, L: 9, XL: 2 },
+      category: 'CAPS', costPrice: 210, style: 'cap', color: '#7c2d12',
+    },
+    {
+      key: 'pants',
+      name: 'Skyline Athletic Track Pants',
+      description: 'Four-way-stretch joggers with zip pockets, tapered cuffs and reflective Skyline side piping.',
+      memberPrice: 799,
+      regularPrice: 1049,
+      stock: { S: 10, M: 2, L: 16, XL: 8 },
+      category: 'PANTS', costPrice: 450, style: 'pants', color: '#111827',
+    },
+    {
+      key: 'tote',
+      name: 'Insulated Campus Tote & Bottle',
+      description: 'Heavy canvas tote with a double-wall steel bottle that keeps chai hot for 12 hours. Sizes are bottle capacities.',
+      memberPrice: 499,
+      regularPrice: 699,
+      stock: { S: 20, M: 3, L: 15, XL: 11 },
+      category: 'ACCESSORIES', costPrice: 260, style: 'tote', color: '#5b3f8c',
     },
   ];
   const variants = {};
   for (const m of merch) {
-    const itemId = Number(insertItem.run(m.name, m.description, 'APPAREL', m.memberPrice, m.regularPrice, daysAgo(45)).lastInsertRowid);
+    const itemId = Number(insertItem.run(
+      m.name, m.description, m.category, m.memberPrice, m.regularPrice, daysAgo(45),
+      m.costPrice, 5, users.vikram.id, JSON.stringify({ style: m.style, color: m.color }),
+    ).lastInsertRowid);
     for (const [size, stock] of Object.entries(m.stock)) {
       variants[`${m.key}:${size}`] = { id: Number(insertVariant.run(itemId, size, stock).lastInsertRowid), item: m };
     }
@@ -237,20 +269,119 @@ function insertSeedData(passwordHashes) {
   );
 
   insertExpense.run(users.neha.id, 'Bake sale ingredients — first batch', 'FUNDRAISER_SUPPLIES', 1640, 'RCPT-2026-1001', 'PENDING', null, daysAgo(1));
+  return { users, insertLedger, now };
+}
+
+// ---------------------------------------------------------------- full semester dataset
+// 100 more students (IDs 6-105): 55 club members (SKY-2026-005 … 059), 30
+// non-members and 15 volunteers, with dues, Gala and workshop tickets, merch
+// orders spread over the last 120 days, and 3 pending task requests. The test
+// suites seed the compact profile (just the 5 named accounts) so their exact
+// counts stay stable; verify-phase8.js checks this full profile.
+const FIRST = ['Aarav', 'Ananya', 'Ishaan', 'Diya', 'Vihaan', 'Saanvi', 'Arjun', 'Myra', 'Reyansh', 'Kiara', 'Aditya', 'Navya', 'Krishna', 'Pari', 'Sai', 'Riya', 'Atharv', 'Aadhya', 'Dhruv', 'Ira', 'Kabir', 'Tara', 'Ayaan', 'Meher', 'Vivaan', 'Anika', 'Shaurya', 'Prisha', 'Rudra', 'Siya'];
+const LAST = ['Patel', 'Shah', 'Mehta', 'Iyer', 'Nair', 'Reddy', 'Gupta', 'Kulkarni', 'Desai', 'Chopra', 'Bose', 'Menon', 'Trivedi', 'Pandya', 'Joshi', 'Rao', 'Malhotra', 'Bhatt', 'Kapoor', 'Saxena', 'Pillai', 'Chauhan', 'Parekh', 'Banerjee'];
+
+function insertBulkData(users, passwordHash, insertLedger, now) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const daysAgo = (days) => iso(now - days * DAY_MS);
+  let seed = 20260;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const pick = (list) => list[Math.floor(rand() * list.length)];
+
+  const insertUser = db.prepare(`
+    INSERT INTO users (name, email, password_hash, role, membership_code, membership_status, membership_expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  const bulk = [];
+  const emails = new Set();
+  for (let i = 0; i < 100; i++) {
+    const first = FIRST[i % FIRST.length];
+    const last = LAST[(i * 7 + Math.floor(i / FIRST.length)) % LAST.length];
+    let email = `${first}.${last}@skyline.edu`.toLowerCase();
+    for (let n = 2; emails.has(email); n++) email = `${first}.${last}${n}@skyline.edu`.toLowerCase();
+    emails.add(email);
+    const kind = i < 55 ? 'MEMBER' : i < 85 ? 'NON_MEMBER' : 'VOLUNTEER';
+    const code = kind === 'MEMBER' ? `SKY-2026-${String(i + 5).padStart(3, '0')}` : null;
+    // A few members paid ~11 months ago, so their renewal reminder is live.
+    const paidDaysAgo = kind === 'MEMBER' ? (i % 11 === 0 ? 340 + (i % 20) : 5 + Math.floor(rand() * 200)) : null;
+    const joined = kind === 'MEMBER' ? paidDaysAgo + 3 : 2 + Math.floor(rand() * 150);
+    const id = Number(insertUser.run(
+      `${first} ${last}`, email, passwordHash, kind === 'VOLUNTEER' ? 'VOLUNTEER' : 'STUDENT', code,
+      code ? 'ACTIVE' : 'NONE', code ? iso(now - paidDaysAgo * DAY_MS + MEMBERSHIP_TERM_DAYS * DAY_MS) : null, daysAgo(joined),
+    ).lastInsertRowid);
+    if (code) insertLedger.run('IN', 'MEMBERSHIP_DUES', MEMBERSHIP_FEE, `Annual Membership Dues - ${first} ${last}`, code, id, daysAgo(paidDaysAgo));
+    bulk.push({ id, name: `${first} ${last}`, kind });
+  }
+  const members = bulk.filter((u) => u.kind === 'MEMBER');
+  const others = bulk.filter((u) => u.kind !== 'MEMBER');
+
+  // Tickets: 28 for the Gala, 18 for the workshop.
+  const insertTicket = db.prepare('INSERT INTO tickets (ticket_code, event_id, user_id, price_paid, created_at) VALUES (?, ?, ?, ?, ?)');
+  const plan = [['Spring Annual Gala 2026', 'GALA26', 28, 3], ['Odoo ERP Workshop & Hack Night', 'ODOO26', 18, 2]];
+  for (const [title, tag, count, firstNo] of plan) {
+    const event = db.prepare('SELECT * FROM events WHERE title = ?').get(title);
+    const buyers = [...members.slice(0, Math.ceil(count * 0.7)), ...others.slice(0, count - Math.ceil(count * 0.7))];
+    buyers.forEach((u, n) => {
+      const price = u.kind === 'MEMBER' ? event.member_price : event.guest_price;
+      const code = `TKT-${tag}-${String(firstNo + n).padStart(4, '0')}`;
+      const when = daysAgo(1 + Math.floor(rand() * 12));
+      insertTicket.run(code, event.id, u.id, price, when);
+      insertLedger.run('IN', 'TICKET_SALE', price, `Ticket ${code} — ${title} (${u.kind === 'MEMBER' ? 'member' : 'guest'} price)`, code, u.id, when);
+    });
+    db.prepare('UPDATE events SET seats_left = seats_left - ? WHERE id = ?').run(buyers.length, event.id);
+  }
+
+  // 64 merch orders across the last 120 days (stock counts are what is left now).
+  const variants = db.prepare('SELECT v.id, v.size, i.name, i.member_price, i.regular_price FROM merch_variants v JOIN merch_items i ON i.id = v.item_id').all();
+  const insertOrder = db.prepare(`
+    INSERT INTO merch_orders (order_code, user_id, variant_id, quantity, total_paid, fulfillment_status, created_at, picked_up_at, picked_up_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  for (let n = 0; n < 64; n++) {
+    const u = n % 3 === 2 ? pick(others) : pick(members);
+    const v = pick(variants);
+    const qty = rand() < 0.8 ? 1 : 2;
+    const total = (u.kind === 'MEMBER' ? v.member_price : v.regular_price) * qty;
+    const age = n < 14 ? 1 + Math.floor(rand() * 6) : n < 34 ? 8 + Math.floor(rand() * 22) : 31 + Math.floor(rand() * 90);
+    const code = `ORD-2026-${String(3 + n).padStart(4, '0')}`;
+    const picked = age > 7;
+    insertOrder.run(code, u.id, v.id, qty, total, picked ? 'PICKED_UP' : 'PAID_PENDING_PICKUP', daysAgo(age),
+      picked ? daysAgo(age - 1) : null, picked ? users.neha.id : null);
+    insertLedger.run('IN', 'MERCH_SALE', total, `Order ${code} — ${qty} × ${v.name} (${v.size})`, code, u.id, daysAgo(age));
+  }
+
+  // Two more open bake-sale tasks, and 3 pending requests to take them.
+  const insertTask = db.prepare(`
+    INSERT INTO fundraiser_tasks (campaign_name, title, assigned_to, status, due_date, created_at)
+    VALUES (?, ?, NULL, 'TODO', ?, ?)`);
+  const labels = Number(insertTask.run(BAKE_SALE, 'Print price labels and allergen cards', localDate(now + 5 * DAY_MS), daysAgo(3)).lastInsertRowid);
+  insertTask.run(BAKE_SALE, 'Arrange 20 trestle tables and two gazebos', localDate(now + 6 * DAY_MS), daysAgo(3));
+  const upi = db.prepare("SELECT id FROM fundraiser_tasks WHERE title = 'Set up the UPI QR code and cash float'").get().id;
+  const volunteers = bulk.filter((u) => u.kind === 'VOLUNTEER');
+  const insertRequest = db.prepare("INSERT INTO task_requests (task_id, user_id, note, status, created_at) VALUES (?, ?, ?, 'PENDING', ?)");
+  insertRequest.run(upi, volunteers[0].id, 'I handle the UPI collections at my family shop, happy to set this up.', daysAgo(1));
+  insertRequest.run(upi, members[1].id, 'I can bring a cash box and ₹2,000 in change on Saturday morning.', daysAgo(0.5));
+  insertRequest.run(labels, members[2].id, 'I can design and laminate 40 labels on Friday.', daysAgo(0.3));
 }
 
 // Seeds only when the users table is empty, unless reset is true (wipe + reseed).
-function seedDatabase({ reset = false } = {}) {
+// profile: 'full' (the 105-user semester, the default) or 'compact' (5 users;
+// the test suites set SEED_PROFILE=compact).
+function seedDatabase({ reset = false, profile = process.env.SEED_PROFILE || 'full' } = {}) {
   if (!reset && userCount() > 0) return { seeded: false };
 
   // scrypt is deliberately slow; hash before taking the write lock.
   const passwordHashes = new Map(DEMO_ACCOUNTS.map((a) => [a.email, hashPassword(DEMO_PASSWORD)]));
+  // The 100 extra demo students share one hash of the demo password (same password, so nothing leaks).
+  const bulkHash = profile === 'compact' ? null : hashPassword(DEMO_PASSWORD);
 
   return withTransaction(() => {
     if (reset) wipeAll();
     else if (userCount() > 0) return { seeded: false }; // another process seeded first
-    insertSeedData(passwordHashes);
-    return { seeded: true, counts: tableCounts() };
+    const { users, insertLedger, now } = insertSeedData(passwordHashes);
+    if (bulkHash) insertBulkData(users, bulkHash, insertLedger, now);
+    return { seeded: true, profile: bulkHash ? 'full' : 'compact', counts: tableCounts() };
   });
 }
 
@@ -258,7 +389,7 @@ function seedIfEmpty() {
   return seedDatabase({ reset: false });
 }
 
-module.exports = { seedDatabase, seedIfEmpty, DEMO_ACCOUNTS, DEMO_PASSWORD };
+module.exports = { seedDatabase, seedIfEmpty, DEMO_ACCOUNTS, DEMO_PASSWORD, FIRST, LAST };
 
 if (require.main === module) {
   const reset = process.argv.includes('--reset');
