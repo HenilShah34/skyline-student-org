@@ -8,6 +8,21 @@ A small, complete ERP for a student association, built for the **Odoo × LDCE Ha
 
 ---
 
+## Visual tour
+
+Captured from the running app at 1280×800 (light and dark themes) using the seeded demo data.
+
+| | |
+|---|---|
+| **Sign-in portal** (light): full-screen sign-in with Quick Fill demo accounts, forgot-email / forgot-password, and the Light/Dark pill | **Overview & Membership** (dark): the Founding Admin's member card, live member pricing and Door Member Lookup |
+| ![Sign-in portal with Quick Fill credentials](docs/screenshots/01-login-portal.png) | ![Overview and membership page in dark mode](docs/screenshots/02-overview-membership-dark.png) |
+| **Events & door check-in** (light): a volunteer scans a ticket; attendance stats, the attendee search and a ticket stub with its real barcode | **Digital Entry Pass** (light): a student's printable pass with tier, check-in status and a scannable Code 128 barcode, opened over the Merch Store |
+| ![Door ticket scanner and check-in desk](docs/screenshots/03-events-ticketing-checkin.png) | ![Digital entry pass modal over the merch store](docs/screenshots/04-merch-store-passes.png) |
+| **Treasurer's books** (dark): What Came In − What Went Out = How Much Is Left, where the money came from, and the four breakdown cards that filter the ledger | |
+| ![Treasurer finance at-a-glance panel in dark mode](docs/screenshots/05-treasurer-finance-at-a-glance.png) | |
+
+---
+
 ## The six scenes and how they connect
 
 | # | Scene | What happens | Writes to |
@@ -338,6 +353,7 @@ routes/                   memberships · events · announcements · merch · tas
 public/                   index.html · styles.css · app.js (the whole UI, including the barcode generator and passes)
 verify-*.js               Verification suites (verify-all.js runs them)
 proof-*.js                Live terminal demos
+docs/screenshots/         README visual tour (1280×800 PNG)
 ```
 
 ## Configuration
